@@ -20,6 +20,7 @@ const ARROW_CORNER_RADIUS_RATIO = 0.22;
 const HUD_HEIGHT = 54;
 const CELL_SIZE_WORLD = 8;
 const DRAG_THRESHOLD = 5;
+const TOUCH_DRAG_THRESHOLD = 15;
 const MIN_ZOOM = 0.05;
 const MAX_ZOOM = 5.0;
 const ZOOM_STEP = 1.15;
@@ -978,10 +979,14 @@ function setupInput(canvas, renderer, ctrl) {
     }
   }
 
+  let isTouch = false;
+
   function handlePointerUp(x, y) {
     if (renderer.camera.isDragging) {
-      const wasClick = renderer.camera.endDrag();
-      if (wasClick && ctrl.phase === Phase.PLAYING && ctrl.board) {
+      const threshold = isTouch ? TOUCH_DRAG_THRESHOLD : DRAG_THRESHOLD;
+      const wasDrag = renderer.camera._dragMoved >= threshold;
+      renderer.camera.endDrag();
+      if (!wasDrag && ctrl.phase === Phase.PLAYING && ctrl.board) {
         const cell = renderer.screenToCell(x, y, ctrl.board);
         if (cell) ctrl.handleClick(cell[0], cell[1]);
       }
@@ -996,7 +1001,7 @@ function setupInput(canvas, renderer, ctrl) {
 
   // Mouse
   canvas.addEventListener("mousedown", (e) => {
-    handlePointerDown(e.clientX, e.clientY); markDirty();
+    isTouch = false; handlePointerDown(e.clientX, e.clientY); markDirty();
   });
   canvas.addEventListener("mousemove", (e) => {
     handlePointerMove(e.clientX, e.clientY); if (renderer.camera.isDragging) markDirty();
@@ -1023,6 +1028,7 @@ function setupInput(canvas, renderer, ctrl) {
   // Touch
   canvas.addEventListener("touchstart", (e) => {
     e.preventDefault();
+    isTouch = true;
     if (e.touches.length === 2) {
       const dx = e.touches[1].clientX - e.touches[0].clientX;
       const dy = e.touches[1].clientY - e.touches[0].clientY;
