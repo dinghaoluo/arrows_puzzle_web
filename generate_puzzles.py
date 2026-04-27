@@ -94,7 +94,13 @@ def main() -> None:
         web_path = save_web_json(level, board, solution, dest_web)
 
         arrow_count = len(board.living_arrows())
-        total_cells = sum(len(a.cells) for a in board.living_arrows())
+        total_cells = len(
+            {
+                cell
+                for arrow in board.living_arrows()
+                for cell in arrow.cells
+            }
+        )
         grid_cells = config.grid_rows * config.grid_cols
         coverage = 100 * total_cells / grid_cells
         size_kb = web_path.stat().st_size / 1024

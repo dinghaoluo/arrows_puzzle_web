@@ -74,7 +74,11 @@ class PuzzleGenerator:
         self._fill_remaining(board, rows, cols)
         all_arrows = list(board.living_arrows())
         solver_order = self._solve(board)
-        if solver_order is not None and len(solver_order) == len(all_arrows):
+        if (
+            solver_order is not None
+            and len(solver_order) == len(all_arrows)
+            and self._is_fully_covered(board, rows, cols)
+        ):
             return board, solver_order
 
         for a in placement:
@@ -87,6 +91,9 @@ class PuzzleGenerator:
             a.alive = True
             for r2, c2 in a.cells:
                 board._grid[r2][c2] = a
+
+        if not self._is_fully_covered(board, rows, cols):
+            return None
 
         return board, list(reversed(placement))
 
@@ -107,10 +114,7 @@ class PuzzleGenerator:
 
         while len(path) < target:
             r, c = path[-1]
-
-            if len(path) >= min_len:
-                if r == 0 or r == rows - 1 or c == 0 or c == cols - 1:
-                    break
+            on_border = r == 0 or r == rows - 1 or c == 0 or c == cols - 1
 
             neighbors = []
             for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
@@ -124,6 +128,31 @@ class PuzzleGenerator:
                     neighbors.append((nr, nc))
             if not neighbors:
                 break
+
+            if len(path) >= min_len and on_border:
+                edge_neighbors = [
+                    (nr, nc)
+                    for nr, nc in neighbors
+                    if nr == 0 or nr == rows - 1 or nc == 0 or nc == cols - 1
+                ]
+                if edge_neighbors:
+                    neighbors = edge_neighbors
+                elif rng.random() < 0.20:
+                    break
+
+            if len(path) + 1 >= target:
+                interior_neighbors = [
+                    (nr, nc)
+                    for nr, nc in neighbors
+                    if not (
+                        nr == 0
+                        or nr == rows - 1
+                        or nc == 0
+                        or nc == cols - 1
+                    )
+                ]
+                if interior_neighbors:
+                    neighbors = interior_neighbors
 
             # Force turns: prefer changing direction from last step
             if len(path) >= 2:
@@ -197,6 +226,11 @@ class PuzzleGenerator:
                 d_rev = self._direction_of(rev[-2], rev[-1])
                 if d_rev is not None:
                     opts.append((rev, d_rev))
+            opts.sort(
+                key=lambda item: self._is_border_exit(
+                    item[0][-1], item[1], board.rows, board.cols
+                )
+            )
             return opts
 
         def find_blocker(
@@ -324,6 +358,15 @@ class PuzzleGenerator:
                         merged = True
                         changed = True
                         break
+                    if (
+                        adj.cells[-1] == (nr, nc)
+                        and can_merge((r, c), adj)
+                        and self._extend_safe_head(adj, (r, c))
+                    ):
+                        board._grid[r][c] = adj
+                        merged = True
+                        changed = True
+                        break
                 if not merged:
                     still.append((r, c))
             uncovered = still
@@ -365,8 +408,58 @@ class PuzzleGenerator:
                     still2.append((r, c))
             uncovered = still2
 
+        if uncovered:
+            still3 = []
+            for r, c in uncovered:
+                if board.is_cell_occupied(r, c):
+                    continue
+                merged = False
+                for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                    nr, nc = r + dr, c + dc
+                    if not (0 <= nr < rows and 0 <= nc < cols):
+                        continue
+                    adj = board.get_arrow_at(nr, nc)
+                    if adj is None or not can_merge((r, c), adj):
+                        continue
+                    if self._insert_safe_spur_cell(adj, (r, c)):
+                        board._grid[r][c] = adj
+                        merged = True
+                        break
+                if not merged:
+                    still3.append((r, c))
+            uncovered = still3
+
+        changed = True
+        while changed and uncovered:
+            changed = False
+            still4 = []
+            for r, c in uncovered:
+                if board.is_cell_occupied(r, c):
+                    continue
+                merged = False
+                for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                    nr, nc = r + dr, c + dc
+                    if not (0 <= nr < rows and 0 <= nc < cols):
+                        continue
+                    adj = board.get_arrow_at(nr, nc)
+                    if adj is None or not can_merge((r, c), adj):
+                        continue
+                    if (
+                        self._extend_tail(adj, (r, c))
+                        or self._extend_safe_head(adj, (r, c))
+                        or self._splice_cell(adj, (r, c))
+                        or self._insert_safe_spur_cell(adj, (r, c))
+                    ):
+                        board._grid[r][c] = adj
+                        merged = True
+                        changed = True
+                        break
+                if not merged:
+                    still4.append((r, c))
+            uncovered = still4
+
     def _fill_remaining(self, board: Board, rows: int, cols: int) -> None:
-        """Aggressively merge remaining uncovered cells (may break solvability)."""
+        """aggressively merge remaining uncovered cells (may break solvability)."""
         uncovered = [
             (r, c)
             for r in range(rows)
@@ -380,23 +473,114 @@ class PuzzleGenerator:
             for r, c in uncovered:
                 if board.is_cell_occupied(r, c):
                     continue
-                merged = False
-                for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
-                    nr, nc = r + dr, c + dc
-                    if not (0 <= nr < rows and 0 <= nc < cols):
-                        continue
-                    adj = board.get_arrow_at(nr, nc)
-                    if adj is None:
-                        continue
-                    if adj.cells[0] == (nr, nc):
-                        adj.cells.insert(0, (r, c))
-                        board._grid[r][c] = adj
-                        merged = True
-                        changed = True
-                        break
-                if not merged:
+                if self._merge_remaining_cell(board, rows, cols, (r, c)):
+                    changed = True
+                else:
                     still.append((r, c))
             uncovered = still
+
+    def _merge_remaining_cell(
+        self,
+        board: Board,
+        rows: int,
+        cols: int,
+        cell: tuple[int, int],
+    ) -> bool:
+        r, c = cell
+        candidates: list[Arrow] = []
+        seen: set[int] = set()
+        for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+            nr, nc = r + dr, c + dc
+            if not (0 <= nr < rows and 0 <= nc < cols):
+                continue
+            adj = board.get_arrow_at(nr, nc)
+            if adj is not None and id(adj) not in seen:
+                candidates.append(adj)
+                seen.add(id(adj))
+
+        for adj in candidates:
+            if self._extend_tail(adj, cell):
+                board._grid[r][c] = adj
+                return True
+
+        for adj in candidates:
+            if self._extend_head(adj, cell):
+                board._grid[r][c] = adj
+                return True
+
+        for adj in candidates:
+            if self._splice_cell(adj, cell):
+                board._grid[r][c] = adj
+                return True
+
+        for adj in candidates:
+            if self._insert_spur_cell(adj, cell):
+                board._grid[r][c] = adj
+                return True
+
+        return False
+
+    def _extend_tail(self, arrow: Arrow, cell: tuple[int, int]) -> bool:
+        if self._are_adjacent(cell, arrow.cells[0]):
+            arrow.cells.insert(0, cell)
+            return True
+        return False
+
+    def _extend_head(self, arrow: Arrow, cell: tuple[int, int]) -> bool:
+        if not self._are_adjacent(arrow.cells[-1], cell):
+            return False
+        new_dir = self._direction_of(arrow.cells[-1], cell)
+        if new_dir is None:
+            return False
+        arrow.cells.append(cell)
+        arrow.direction = new_dir
+        return True
+
+    def _extend_safe_head(self, arrow: Arrow, cell: tuple[int, int]) -> bool:
+        if not self._are_adjacent(arrow.cells[-1], cell):
+            return False
+        new_dir = self._direction_of(arrow.cells[-1], cell)
+        if new_dir != arrow.direction:
+            return False
+        arrow.cells.append(cell)
+        return True
+
+    def _splice_cell(self, arrow: Arrow, cell: tuple[int, int]) -> bool:
+        for i in range(1, len(arrow.cells)):
+            if (
+                self._are_adjacent(arrow.cells[i - 1], cell)
+                and self._are_adjacent(cell, arrow.cells[i])
+            ):
+                arrow.cells.insert(i, cell)
+                return True
+        return False
+
+    def _insert_spur_cell(self, arrow: Arrow, cell: tuple[int, int]) -> bool:
+        for i, anchor in enumerate(arrow.cells):
+            if not self._are_adjacent(anchor, cell):
+                continue
+            arrow.cells[i + 1:i + 1] = [cell, anchor]
+            if i == len(arrow.cells) - 3:
+                new_dir = self._direction_of(cell, anchor)
+                if new_dir is not None:
+                    arrow.direction = new_dir
+            return True
+        return False
+
+    def _insert_safe_spur_cell(
+        self, arrow: Arrow, cell: tuple[int, int]
+    ) -> bool:
+        for i, anchor in enumerate(arrow.cells[:-1]):
+            if not self._are_adjacent(anchor, cell):
+                continue
+            arrow.cells[i + 1:i + 1] = [cell, anchor]
+            return True
+        return False
+
+    def _are_adjacent(
+        self, a: tuple[int, int], b: tuple[int, int]
+    ) -> bool:
+        return abs(a[0] - b[0]) + abs(a[1] - b[1]) == 1
 
     def _clear_exit_orientation(
         self,
@@ -405,7 +589,7 @@ class PuzzleGenerator:
         rows: int,
         cols: int,
     ) -> Arrow | None:
-        best: tuple[int, list[tuple[int, int]], Direction] | None = None
+        best: tuple[bool, int, list[tuple[int, int]], Direction] | None = None
         for cells in (walk, list(reversed(walk))):
             d = self._direction_of(cells[-2], cells[-1])
             if d is None:
@@ -423,11 +607,13 @@ class PuzzleGenerator:
                 r += dr
                 c += dc
             if clear:
-                if best is None or dist < best[0]:
-                    best = (dist, cells, d)
+                border_exit = self._is_border_exit(cells[-1], d, rows, cols)
+                option = (border_exit, dist, cells, d)
+                if best is None or option[:2] < best[:2]:
+                    best = option
         if best is None:
             return None
-        _, cells, d = best
+        _, _, cells, d = best
         return Arrow(cells=list(cells), direction=d)
 
     def _best_orientation(
@@ -477,6 +663,28 @@ class PuzzleGenerator:
             if vr == dr and vc == dc:
                 return d
         return None
+
+    def _is_border_exit(
+        self,
+        head: tuple[int, int],
+        direction: Direction,
+        rows: int,
+        cols: int,
+    ) -> bool:
+        dr, dc = DIRECTION_VECTORS[direction]
+        r, c = head
+        return not (0 <= r + dr < rows and 0 <= c + dc < cols)
+
+    def _is_fully_covered(self, board: Board, rows: int, cols: int) -> bool:
+        return self._covered_cell_count(board, rows, cols) == rows * cols
+
+    def _covered_cell_count(self, board: Board, rows: int, cols: int) -> int:
+        return sum(
+            1
+            for r in range(rows)
+            for c in range(cols)
+            if board._grid[r][c] is not None
+        )
 
     def _pick_length(self, lo: int, hi: int, rng: random.Random) -> int:
         lo = max(lo, 2)
