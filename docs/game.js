@@ -70,46 +70,13 @@ class Arrow {
     this.flyProgress = 0;
     this.animatingFlyOff = false;
     this._smoothWorld = null;
-    this._visualCells = null;
-    this._spurCells = null;
   }
   get head() { return this.cells[this.cells.length - 1]; }
   get tail() { return this.cells[0]; }
-  get visualCells() {
-    this._buildVisualGeometry();
-    return this._visualCells;
-  }
-  get spurCells() {
-    this._buildVisualGeometry();
-    return this._spurCells;
-  }
-  _buildVisualGeometry() {
-    if (this._visualCells) return;
-    const visual = [];
-    const spurs = [];
-    const same = (a, b) => a[0] === b[0] && a[1] === b[1];
-    const pushVisual = (cell) => {
-      if (visual.length === 0 || !same(visual[visual.length - 1], cell)) {
-        visual.push(cell);
-      }
-    };
-
-    for (let i = 0; i < this.cells.length; i++) {
-      if (i + 2 < this.cells.length && same(this.cells[i], this.cells[i + 2])) {
-        pushVisual(this.cells[i]);
-        spurs.push(this.cells[i + 1]);
-        i += 2;
-      } else {
-        pushVisual(this.cells[i]);
-      }
-    }
-    this._visualCells = visual.length > 0 ? visual : this.cells;
-    this._spurCells = spurs;
-  }
   smoothWorld(cr) {
     if (this._smoothWorld) return this._smoothWorld;
     const cs = CELL_SIZE_WORLD;
-    const centers = this.visualCells.map(([r, c]) => [c * cs + cs / 2, r * cs + cs / 2]);
+    const centers = this.cells.map(([r, c]) => [c * cs + cs / 2, r * cs + cs / 2]);
     this._smoothWorld = cr > 0 ? smoothPolyline(centers, cr) : centers;
     return this._smoothWorld;
   }
@@ -759,14 +726,13 @@ class Renderer {
     ctx.lineJoin = "round";
     let pathCount = 0;
     let headBuf = drawHeads ? [] : null;
-    let spurBuf = [];
     ctx.beginPath();
 
     for (const arrow of arrows) {
       if (arrow.animatingFlyOff) { flyArrows.push(arrow); continue; }
       if (arrow.errorTimer > 0) { errorArrows.push(arrow); continue; }
 
-      const cells = arrow.visualCells;
+      const cells = arrow.cells;
       if (useSmooth) {
         const wpts = arrow.smoothWorld(crWorld);
         ctx.moveTo(wpts[0][0] * z + oox, wpts[0][1] * z + ooy);
@@ -789,10 +755,6 @@ class Renderer {
         if (drawHeads) headBuf.push(sx, sy, arrow.direction);
       }
 
-      for (const [sr, sc] of arrow.spurCells) {
-        spurBuf.push((sc * csW + hcs) * z + oox, (sr * csW + hcs) * z + ooy);
-      }
-
       if (++pathCount >= CHUNK) {
         ctx.stroke();
         ctx.beginPath();
@@ -800,17 +762,6 @@ class Renderer {
       }
     }
     if (pathCount > 0) ctx.stroke();
-
-    if (spurBuf.length > 0) {
-      const spurR = Math.max(1, bw * 0.75);
-      ctx.fillStyle = ARROW_COLOR;
-      ctx.beginPath();
-      for (let i = 0; i < spurBuf.length; i += 2) {
-        ctx.moveTo(spurBuf[i] + spurR, spurBuf[i + 1]);
-        ctx.arc(spurBuf[i], spurBuf[i + 1], spurR, 0, Math.PI * 2);
-      }
-      ctx.fill();
-    }
 
     if (drawHeads && headBuf.length > 0) {
       ctx.fillStyle = ARROW_COLOR;
@@ -835,7 +786,7 @@ class Renderer {
       ctx.lineCap = "round";
       ctx.lineJoin = "round";
       ctx.beginPath();
-      const cells = arrow.visualCells;
+      const cells = arrow.cells;
       if (useSmooth) {
         const wpts = arrow.smoothWorld(crWorld);
         ctx.moveTo(wpts[0][0] * z + oox + shake, wpts[0][1] * z + ooy);
@@ -849,18 +800,6 @@ class Renderer {
         }
       }
       ctx.stroke();
-      if (arrow.spurCells.length > 0) {
-        const spurR = Math.max(1, bw * 0.75);
-        ctx.fillStyle = ARROW_ERROR_COLOR;
-        ctx.beginPath();
-        for (const [sr, sc] of arrow.spurCells) {
-          const sx = (sc * csW + hcs) * z + oox + shake;
-          const sy = (sr * csW + hcs) * z + ooy;
-          ctx.moveTo(sx + spurR, sy);
-          ctx.arc(sx, sy, spurR, 0, Math.PI * 2);
-        }
-        ctx.fill();
-      }
       if (drawHeads) {
         let lhx, lhy;
         if (useSmooth) {
@@ -879,7 +818,7 @@ class Renderer {
     }
 
     for (const arrow of flyArrows) {
-      const centers = arrow.visualCells.map(([r, c]) => this.cellCenter(r, c));
+      const centers = arrow.cells.map(([r, c]) => this.cellCenter(r, c));
       const cr = cs * ARROW_CORNER_RADIUS_RATIO;
       this._drawArrowFlying(ctx, arrow, centers, cs, headSize, cr, bw);
     }

@@ -1,4 +1,6 @@
+## imports
 from __future__ import annotations
+from functools import lru_cache
 import random
 from game.board import Board
 from game.arrow import Arrow
@@ -20,6 +22,226 @@ class PuzzleGenerator:
         if rng is None:
             rng = random.Random()
 
+        return self._build_tiled_puzzle(rows, cols, min_length, max_length, rng)
+
+    def _build_tiled_puzzle(
+        self,
+        rows: int,
+        cols: int,
+        min_length: int,
+        max_length: int,
+        rng: random.Random,
+    ) -> tuple[Board, list[Arrow]]:
+        board = Board(rows, cols)
+        solution: list[Arrow] = []
+
+        r = 0
+        band_index = 0
+        while r < rows:
+            band_height = self._pick_band_height(rows - r, rng)
+            max_width = max(2, max_length // band_height)
+            widths = self._partition_widths(cols, max_width, rng)
+            exit_dir = (
+                Direction.LEFT
+                if (band_index + rng.randint(0, 1)) % 2 == 0
+                else Direction.RIGHT
+            )
+
+            c = 0
+            band_arrows: list[Arrow] = []
+            for width in widths:
+                # keep escape arrows from advertising the solution on the border.
+                inset_exit = (
+                    (exit_dir == Direction.LEFT and c == 0)
+                    or (exit_dir == Direction.RIGHT and c + width == cols)
+                )
+                cells = self._serpentine_cells(
+                    r, band_height, c, width, exit_dir, inset_exit
+                )
+                direction = self._direction_of(cells[-2], cells[-1])
+                if direction is None:
+                    direction = exit_dir
+                arrow = Arrow(cells=cells, direction=direction)
+                board.place_arrow(arrow)
+                band_arrows.append(arrow)
+                c += width
+
+            if exit_dir == Direction.LEFT:
+                solution.extend(band_arrows)
+            else:
+                solution.extend(reversed(band_arrows))
+
+            r += band_height
+            band_index += 1
+
+        return board, solution
+
+    def _pick_band_height(self, remaining_rows: int, rng: random.Random) -> int:
+        if remaining_rows <= 2:
+            return remaining_rows
+        if remaining_rows == 3:
+            return 3
+        band_height = 4 if rng.random() < 0.35 else 2
+        if remaining_rows - band_height == 1:
+            return 2
+        return min(band_height, remaining_rows)
+
+    def _partition_widths(
+        self, cols: int, max_width: int, rng: random.Random
+    ) -> list[int]:
+        if max_width >= 3 and cols >= 6:
+            middle_total = cols - 6
+            if middle_total == 1 and max_width >= 4:
+                return [4, 3]
+            if middle_total != 1:
+                return [3] + self._partition_inner_widths(
+                    middle_total, max_width, rng
+                ) + [3]
+
+        return self._partition_inner_widths(cols, max_width, rng)
+
+    def _partition_inner_widths(
+        self, cols: int, max_width: int, rng: random.Random
+    ) -> list[int]:
+        widths: list[int] = []
+        remaining = cols
+        max_width = max(2, max_width)
+
+        while remaining:
+            if remaining <= max_width:
+                if remaining == 1 and widths:
+                    widths[-1] -= 1
+                    widths.append(2)
+                else:
+                    widths.append(remaining)
+                break
+
+            high = min(max_width, remaining - 2)
+            width = rng.randint(2, high)
+            if remaining - width == 1:
+                width += 1
+            widths.append(width)
+            remaining -= width
+
+        return widths
+
+    def _serpentine_cells(
+        self,
+        row: int,
+        height: int,
+        col: int,
+        width: int,
+        exit_dir: Direction,
+        inset_exit: bool = False,
+    ) -> list[tuple[int, int]]:
+        if inset_exit and height >= 2 and width >= 3:
+            shape = self._inset_exit_shape(height, width, exit_dir)
+            if shape:
+                return [(row + r, col + c) for r, c in shape]
+
+        exit_left = exit_dir == Direction.LEFT
+        left_to_right = exit_left if height % 2 == 0 else not exit_left
+        cells: list[tuple[int, int]] = []
+
+        for r in range(row, row + height):
+            if left_to_right:
+                cells.extend((r, c) for c in range(col, col + width))
+            else:
+                cells.extend((r, c) for c in range(col + width - 1, col - 1, -1))
+            left_to_right = not left_to_right
+
+        return cells
+
+    def _inset_exit_shape(
+        self, height: int, width: int, exit_dir: Direction
+    ) -> tuple[tuple[int, int], ...]:
+        left_shape = self._inset_left_shape(height, width)
+        if exit_dir == Direction.LEFT:
+            return left_shape
+        return tuple((r, width - 1 - c) for r, c in left_shape)
+
+    def _inset_left_shape(
+        self, height: int, width: int
+    ) -> tuple[tuple[int, int], ...]:
+        if height % 2 == 0:
+            cells: list[tuple[int, int]] = [
+                (r, 0) for r in range(height - 1, -1, -1)
+            ]
+            left_to_right = True
+            for r in range(height):
+                if left_to_right:
+                    cells.extend((r, c) for c in range(1, width))
+                else:
+                    cells.extend((r, c) for c in range(width - 1, 0, -1))
+                left_to_right = not left_to_right
+            return tuple(cells)
+
+        return self._searched_inset_left_shape(height, width)
+
+    @staticmethod
+    @lru_cache(maxsize=None)
+    def _searched_inset_left_shape(
+        height: int, width: int
+    ) -> tuple[tuple[int, int], ...]:
+        cells = {(r, c) for r in range(height) for c in range(width)}
+        dirs = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+
+        def neighbours(
+            cell: tuple[int, int], unvisited: set[tuple[int, int]]
+        ) -> list[tuple[int, int]]:
+            r, c = cell
+            result = [
+                (r + dr, c + dc)
+                for dr, dc in dirs
+                if (r + dr, c + dc) in unvisited
+            ]
+            result.sort(
+                key=lambda n: sum(
+                    (n[0] + dr, n[1] + dc) in unvisited for dr, dc in dirs
+                )
+            )
+            return result
+
+        for end_row in range(height):
+            end = (end_row, 1)
+            prev = (end_row, 2)
+            for start in sorted(cells):
+                if start in (end, prev):
+                    continue
+                path = [start]
+                unvisited = set(cells)
+                unvisited.remove(start)
+
+                def dfs(cur: tuple[int, int]) -> bool:
+                    if len(path) == height * width:
+                        return cur == end and path[-2] == prev
+
+                    for nxt in neighbours(cur, unvisited):
+                        if nxt == end and len(path) != height * width - 1:
+                            continue
+                        if nxt == prev and len(path) != height * width - 2:
+                            continue
+                        unvisited.remove(nxt)
+                        path.append(nxt)
+                        if dfs(nxt):
+                            return True
+                        path.pop()
+                        unvisited.add(nxt)
+                    return False
+
+                if dfs(start):
+                    return tuple(path)
+
+        return ()
+
+    def _generate_attempted_walk_puzzle(
+        self,
+        rows: int,
+        cols: int,
+        min_length: int,
+        max_length: int,
+        rng: random.Random,
+    ) -> tuple[Board, list[Arrow]]:
         for _ in range(MAX_ATTEMPTS):
             result = self._build_puzzle(rows, cols, min_length, max_length, rng)
             if result is not None:
