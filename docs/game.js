@@ -168,7 +168,7 @@ class Board {
     r += dr; c += dc;
     while (r >= 0 && r < this.rows && c >= 0 && c < this.cols) {
       const occ = this._grid[r][c];
-      if (occ && occ !== arrow && occ.alive) return false;
+      if (occ && occ.alive) return false;
       r += dr; c += dc;
     }
     return true;
