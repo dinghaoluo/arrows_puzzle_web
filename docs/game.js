@@ -1,7 +1,7 @@
-// Arrows - Puzzle Escape — HTML5 Canvas Port
+// Arrows - Puzzle Escape: HTML5 Canvas port
 "use strict";
 
-// ── Constants ──
+// Constants
 const BG_COLOR = "#fafafc";
 const GRID_DOT_COLOR = "#d2d2d7";
 const ARROW_COLOR = "#2d3446";
@@ -76,7 +76,7 @@ function funColorForArrow(cells, direction) {
   return FUN_COLORS[Math.abs(hash) % FUN_COLORS.length];
 }
 
-// ── Phase enum ──
+// Phase enum
 const Phase = {
   MAIN_MENU: 0,
   LEVEL_SELECT: 1,
@@ -86,7 +86,7 @@ const Phase = {
   GAME_OVER: 5,
 };
 
-// ── Arrow ──
+// Arrow
 class Arrow {
   constructor(cells, direction) {
     this.cells = cells;
@@ -109,7 +109,7 @@ class Arrow {
   }
 }
 
-// ── Board ──
+// Board
 class Board {
   constructor(rows, cols) {
     this.rows = rows;
@@ -215,7 +215,7 @@ function prefetchLevel(level) {
   loadPuzzleData(level).catch(() => {});
 }
 
-// ── Camera ──
+// Camera
 class Camera {
   constructor() { this.reset(); }
 
@@ -286,7 +286,7 @@ class Camera {
   }
 }
 
-// ── Game Controller ──
+// Game Controller
 class GameController {
   constructor() {
     this.phase = Phase.MAIN_MENU;
@@ -297,7 +297,6 @@ class GameController {
     this.lives = this.maxLives;
     this.totalMistakes = 0;
     this.board = null;
-    this._solution = [];
     this.completedLevels = new Set();
     this.maxLevelUnlocked = MAX_LEVEL;
     this.elapsedTime = 0;
@@ -367,7 +366,6 @@ class GameController {
       for (const a of arrows) {
         this.board.placeArrow(a);
       }
-      this._solution = data.solution ? data.solution.map(i => arrows[i]) : [];
       this.totalArrows = arrows.length;
       prefetchLevel(level + 1);
     } catch (e) {
@@ -515,7 +513,7 @@ class GameController {
   goToLevelSelect() { this.phase = Phase.LEVEL_SELECT; prefetchLevel(this.currentLevel); }
 }
 
-// ── Drawing helpers ──
+// Drawing helpers
 function lerpColor(c1, c2, t) {
   const p = (s) => parseInt(s, 16);
   const h1 = c1.replace("#", ""), h2 = c2.replace("#", "");
@@ -606,7 +604,7 @@ function drawHeart(ctx, cx, cy, size, color) {
   ctx.fill();
 }
 
-// ── Arc-length utils for fly-off ──
+// Arc-length utils for fly-off
 function arcLengths(wp) {
   const a = [0];
   for (let i = 1; i < wp.length; i++) {
@@ -631,7 +629,7 @@ function pointAtDist(wp, arc, dist) {
   ];
 }
 
-// ── Renderer ──
+// Renderer
 class Renderer {
   constructor(canvas) {
     this.canvas = canvas;
@@ -1186,19 +1184,12 @@ class Renderer {
   }
 }
 
-// ── Input Handling ──
+// Input Handling
 function setupInput(canvas, renderer, ctrl) {
   let touchId = null;
   let pinchDist0 = null;
   let pinchZoom0 = null;
   let touchGestureCancelled = false;
-
-  function getXY(e) {
-    if (e.touches) {
-      return [e.touches[0].clientX, e.touches[0].clientY];
-    }
-    return [e.clientX, e.clientY];
-  }
 
   function handlePointerDown(x, y) {
     const phase = ctrl.phase;
@@ -1377,7 +1368,7 @@ function setupInput(canvas, renderer, ctrl) {
   });
 }
 
-// ── Game Loop ──
+// Game Loop
 const canvas = document.getElementById("game");
 const ctrl = new GameController();
 const renderer = new Renderer(canvas);
