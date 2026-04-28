@@ -26,7 +26,12 @@ const MAX_ZOOM = 5.0;
 const ZOOM_STEP = 1.15;
 const ERROR_FLASH_DURATION = 0.5;
 const FLY_OFF_DURATION = 0.6;
-const MAX_LEVEL = 20;
+const MAX_LEVEL = 50;
+const EASY_LIVES = 5;
+const HARD_LIVES = 3;
+const EASY_MISTAKE_PENALTY = 5;
+const HARD_MISTAKE_PENALTY = 12;
+const HARD_PAR_MULTIPLIER = 0.7;
 
 const LEVEL_BTN_SIZE = 52;
 const LEVEL_BTN_GAP = 14;
@@ -34,7 +39,10 @@ const LEVEL_BTN_COLS = 6;
 const LEVEL_SELECT_TOP = 90;
 
 const DIRECTION_VECTORS = { up: [-1, 0], down: [1, 0], left: [0, -1], right: [0, 1] };
+const DIRECTION_NAMES = ["up", "down", "left", "right"];
 const DIRECTION_ANGLES = { right: 0, up: -Math.PI / 2, left: Math.PI, down: Math.PI / 2 };
+const MOVE_DELTAS = { U: [-1, 0], D: [1, 0], L: [0, -1], R: [0, 1] };
+const PUZZLE_CACHE = new Map();
 
 const LEVEL_CONFIGS = [
   null, // index 0 unused
@@ -42,12 +50,12 @@ const LEVEL_CONFIGS = [
   [100,120],[110,110],[120,140],[130,130],[140,140],
   [140,170],[150,150],[160,190],[170,170],[180,180],
   [180,220],[200,200],[200,240],[220,220],[230,230],
-  [240,280],[250,250],[260,260],[270,320],[280,280],
-  [290,290],[300,300],[300,360],[320,320],[330,330],
-  [340,340],[340,400],[360,360],[370,370],[380,380],
-  [380,440],[400,400],[410,410],[420,420],[430,430],
-  [430,490],[440,440],[450,450],[460,460],[470,470],
-  [470,520],[480,480],[490,490],[500,500],[500,550],
+  [232,232],[235,235],[238,238],[240,240],[242,248],
+  [245,245],[248,248],[250,255],[252,252],[255,255],
+  [258,258],[260,265],[262,262],[265,265],[268,268],
+  [270,275],[272,272],[275,275],[278,278],[280,285],
+  [282,282],[285,285],[288,288],[290,295],[292,292],
+  [295,295],[296,300],[298,298],[300,300],[300,300],
 ];
 
 // ── Phase enum ──
@@ -89,21 +97,24 @@ class Board {
     this.cols = cols;
     this._grid = Array.from({ length: rows }, () => new Array(cols).fill(null));
     this._arrows = [];
+    this._aliveCount = 0;
   }
 
   placeArrow(arrow) {
     this._arrows.push(arrow);
+    this._aliveCount++;
     for (const [r, c] of arrow.cells) {
       this._grid[r][c] = arrow;
     }
   }
 
   removeArrow(arrow) {
+    if (!arrow.alive) return;
     arrow.alive = false;
+    this._aliveCount--;
     for (const [r, c] of arrow.cells) {
       if (this._grid[r][c] === arrow) this._grid[r][c] = null;
     }
-    this._arrows = this._arrows.filter(a => a.alive);
   }
 
   getArrowAt(row, col) {
@@ -113,7 +124,7 @@ class Board {
   }
 
   livingArrows() { return this._arrows.filter(a => a.alive); }
-  isEmpty() { return this._arrows.every(a => !a.alive); }
+  isEmpty() { return this._aliveCount === 0; }
 
   arrowsInRegion(minR, maxR, minC, maxC) {
     const seen = new Set();
@@ -143,6 +154,46 @@ class Board {
     }
     return true;
   }
+}
+
+function decodeArrows(data) {
+  if (data.v === 2) {
+    const arrows = new Array(data.arrows.length);
+    for (let i = 0; i < data.arrows.length; i++) {
+      const [dirCode, start, moves] = data.arrows[i];
+      const cells = new Array(moves.length + 1);
+      let r = Math.floor(start / data.cols);
+      let c = start - r * data.cols;
+      cells[0] = [r, c];
+      for (let j = 0; j < moves.length; j++) {
+        const [dr, dc] = MOVE_DELTAS[moves[j]];
+        r += dr; c += dc;
+        cells[j + 1] = [r, c];
+      }
+      arrows[i] = new Arrow(cells, DIRECTION_NAMES[dirCode]);
+    }
+    return arrows;
+  }
+
+  return data.arrows.map(ad => new Arrow(ad.cells.map(c => [c[0], c[1]]), ad.dir));
+}
+
+function puzzleUrl(level) {
+  const pad = String(level).padStart(3, "0");
+  return `puzzles/level_${pad}.json`;
+}
+
+async function loadPuzzleData(level) {
+  if (PUZZLE_CACHE.has(level)) return PUZZLE_CACHE.get(level);
+  const resp = await fetch(puzzleUrl(level));
+  const data = await resp.json();
+  PUZZLE_CACHE.set(level, data);
+  return data;
+}
+
+function prefetchLevel(level) {
+  if (level > MAX_LEVEL || PUZZLE_CACHE.has(level)) return;
+  loadPuzzleData(level).catch(() => {});
 }
 
 // ── Camera ──
@@ -221,8 +272,9 @@ class GameController {
   constructor() {
     this.phase = Phase.MAIN_MENU;
     this.currentLevel = 1;
-    this.maxLives = 5;
-    this.lives = 5;
+    this.hardMode = localStorage.getItem("arrows_mode") === "hard";
+    this.maxLives = this.hardMode ? HARD_LIVES : EASY_LIVES;
+    this.lives = this.maxLives;
     this.totalMistakes = 0;
     this.board = null;
     this._solution = [];
@@ -237,9 +289,13 @@ class GameController {
     this._loadProgress();
   }
 
+  _progressKey() {
+    return this.hardMode ? "arrows_save_hard" : "arrows_save_easy";
+  }
+
   _loadProgress() {
     try {
-      const d = JSON.parse(localStorage.getItem("arrows_save") || "{}");
+      const d = JSON.parse(localStorage.getItem(this._progressKey()) || "{}");
       if (d.completed_levels) d.completed_levels.forEach(l => this.completedLevels.add(l));
       if (d.max_level_unlocked) this.maxLevelUnlocked = Math.max(this.maxLevelUnlocked, d.max_level_unlocked);
       if (d.level_stars) this.levelStars = d.level_stars;
@@ -248,12 +304,24 @@ class GameController {
 
   _saveProgress() {
     try {
-      localStorage.setItem("arrows_save", JSON.stringify({
+      localStorage.setItem(this._progressKey(), JSON.stringify({
         completed_levels: [...this.completedLevels].sort((a, b) => a - b),
         max_level_unlocked: this.maxLevelUnlocked,
         level_stars: this.levelStars,
       }));
     } catch (e) { /* ignore */ }
+  }
+
+  toggleMode() {
+    this._saveProgress();
+    this.hardMode = !this.hardMode;
+    localStorage.setItem("arrows_mode", this.hardMode ? "hard" : "easy");
+    this.maxLives = this.hardMode ? HARD_LIVES : EASY_LIVES;
+    this.lives = this.maxLives;
+    this.completedLevels = new Set();
+    this.maxLevelUnlocked = MAX_LEVEL;
+    this.levelStars = {};
+    this._loadProgress();
   }
 
   async startLevel(level) {
@@ -265,19 +333,16 @@ class GameController {
     this.removedArrows = 0;
     this.phase = Phase.PLAYING;
 
-    const pad = String(level).padStart(3, "0");
     try {
-      const resp = await fetch(`puzzles/level_${pad}.json`);
-      const data = await resp.json();
+      const data = await loadPuzzleData(level);
       this.board = new Board(data.rows, data.cols);
-      const arrows = [];
-      for (const ad of data.arrows) {
-        const a = new Arrow(ad.cells.map(c => [c[0], c[1]]), ad.dir);
+      const arrows = decodeArrows(data);
+      for (const a of arrows) {
         this.board.placeArrow(a);
-        arrows.push(a);
       }
-      this._solution = data.solution.map(i => arrows[i]);
+      this._solution = data.solution ? data.solution.map(i => arrows[i]) : [];
       this.totalArrows = arrows.length;
+      prefetchLevel(level + 1);
     } catch (e) {
       console.error("Failed to load level", level, e);
     }
@@ -301,7 +366,7 @@ class GameController {
       this.lives--;
       this.totalMistakes++;
       this.combo = 0;
-      this.elapsedTime += 5;
+      this.elapsedTime += this.hardMode ? HARD_MISTAKE_PENALTY : EASY_MISTAKE_PENALTY;
       if (this.lives <= 0) this.phase = Phase.GAME_OVER;
     }
   }
@@ -314,8 +379,9 @@ class GameController {
 
   _computeStars() {
     const par = this._parTime();
-    if (this.elapsedTime <= par) return 3;
-    if (this.elapsedTime <= par * 2) return 2;
+    const target = this.hardMode ? par * HARD_PAR_MULTIPLIER : par;
+    if (this.elapsedTime <= target) return 3;
+    if (this.elapsedTime <= target * 2) return 2;
     return 1;
   }
 
@@ -324,7 +390,8 @@ class GameController {
     const timerActive = this.phase === Phase.PLAYING || this.phase === Phase.ANIMATING;
     if (timerActive) this.elapsedTime += dt;
     let anyAnim = false;
-    for (const a of this.board.livingArrows()) {
+    for (const a of this.board._arrows) {
+      if (!a.alive) continue;
       if (a.errorTimer > 0) { a.errorTimer = Math.max(0, a.errorTimer - dt); anyAnim = true; }
       if (a.animatingFlyOff) {
         a.flyProgress += dt / FLY_OFF_DURATION;
@@ -353,7 +420,7 @@ class GameController {
   }
 
   restartLevel() { this.startLevel(this.currentLevel); }
-  goToLevelSelect() { this.phase = Phase.LEVEL_SELECT; }
+  goToLevelSelect() { this.phase = Phase.LEVEL_SELECT; prefetchLevel(this.currentLevel); }
 }
 
 // ── Drawing helpers ──
@@ -554,7 +621,7 @@ class Renderer {
     this.ensureCamera(ctrl);
 
     if (ctrl.phase === Phase.MAIN_MENU) {
-      this._drawMainMenu(ctx);
+      this._drawMainMenu(ctx, ctrl);
     } else if (ctrl.phase === Phase.LEVEL_SELECT) {
       this._drawLevelSelect(ctx, ctrl);
     } else {
@@ -571,7 +638,7 @@ class Renderer {
     }
   }
 
-  _drawMainMenu(ctx) {
+  _drawMainMenu(ctx, ctrl) {
     ctx.fillStyle = ARROW_COLOR;
     ctx.textAlign = "center";
     ctx.font = "bold 38px Arial, sans-serif";
@@ -581,13 +648,34 @@ class Renderer {
     ctx.fillText("Puzzle Escape", this._w / 2, this._h / 2 + 10);
     ctx.font = "15px Arial, sans-serif";
     ctx.fillText("Tap to start", this._w / 2, this._h / 2 + 50);
+
+    const btn = this.modeButtonRect();
+    ctx.fillStyle = ctrl.hardMode ? ARROW_ERROR_COLOR : LEVEL_UNLOCKED_BTN;
+    ctx.beginPath();
+    ctx.roundRect(btn.x, btn.y, btn.w, btn.h, 8);
+    ctx.fill();
+    ctx.fillStyle = "#fff";
+    ctx.font = "bold 15px Arial, sans-serif";
+    ctx.textBaseline = "middle";
+    ctx.fillText(ctrl.hardMode ? "Easy Mode" : "Hard Mode", btn.x + btn.w / 2, btn.y + btn.h / 2);
+    ctx.textBaseline = "alphabetic";
+  }
+
+  modeButtonRect() {
+    const w = 156, h = 42;
+    return { x: (this._w - w) / 2, y: this._h - h - 34, w, h };
+  }
+
+  modeHitTest(x, y) {
+    const btn = this.modeButtonRect();
+    return x >= btn.x && x <= btn.x + btn.w && y >= btn.y && y <= btn.y + btn.h;
   }
 
   _drawLevelSelect(ctx, ctrl) {
     ctx.fillStyle = ARROW_COLOR;
     ctx.textAlign = "center";
     ctx.font = "bold 28px Arial, sans-serif";
-    ctx.fillText("Select Level", this._w / 2, 50);
+    ctx.fillText(ctrl.hardMode ? "Hard Mode" : "Select Level", this._w / 2, 50);
 
     const totalW = LEVEL_BTN_COLS * LEVEL_BTN_SIZE + (LEVEL_BTN_COLS - 1) * LEVEL_BTN_GAP;
     const startX = (this._w - totalW) / 2;
@@ -956,6 +1044,10 @@ function setupInput(canvas, renderer, ctrl) {
   function handlePointerDown(x, y) {
     const phase = ctrl.phase;
     if (phase === Phase.MAIN_MENU) {
+      if (renderer.modeHitTest(x, y)) {
+        ctrl.toggleMode();
+        return;
+      }
       ctrl.goToLevelSelect();
       return;
     }

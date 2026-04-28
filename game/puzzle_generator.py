@@ -56,6 +56,7 @@ class PuzzleGenerator:
             board.place_arrow(Arrow(cells=cells, direction=direction))
 
         self._fill_remaining(board, rows, cols)
+        self._cover_remaining_by_endpoint_steal(board, rows, cols)
         if not self._is_fully_covered(board, rows, cols):
             return None
 
@@ -1444,6 +1445,131 @@ class PuzzleGenerator:
                 else:
                     still.append((r, c))
             uncovered = still
+
+    def _cover_remaining_by_endpoint_steal(
+        self, board: Board, rows: int, cols: int
+    ) -> None:
+        changed = True
+        while changed:
+            changed = False
+            uncovered = [
+                (r, c)
+                for r in range(rows)
+                for c in range(cols)
+                if not board.is_cell_occupied(r, c)
+            ]
+            for cell in uncovered:
+                if board.is_cell_occupied(*cell):
+                    continue
+                if (
+                    self._steal_endpoint_for_cell(board, rows, cols, cell)
+                    or self._split_arrow_for_cell(board, rows, cols, cell)
+                ):
+                    changed = True
+
+    def _steal_endpoint_for_cell(
+        self,
+        board: Board,
+        rows: int,
+        cols: int,
+        cell: tuple[int, int],
+    ) -> bool:
+        r, c = cell
+        candidates: list[tuple[Arrow, tuple[int, int], str]] = []
+        for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+            neighbour = (r + dr, c + dc)
+            nr, nc = neighbour
+            if not (0 <= nr < rows and 0 <= nc < cols):
+                continue
+            arrow = board.get_arrow_at(nr, nc)
+            if arrow is None or len(arrow.cells) <= 2:
+                continue
+            if arrow.cells[0] == neighbour:
+                candidates.append((arrow, neighbour, 'tail'))
+            elif arrow.cells[-1] == neighbour:
+                candidates.append((arrow, neighbour, 'head'))
+
+        for arrow, stolen, endpoint in candidates:
+            direction = self._direction_of(stolen, cell)
+            if direction is None:
+                continue
+
+            new_head_dir = None
+            if endpoint == 'head':
+                new_head_dir = self._direction_of(arrow.cells[-3], arrow.cells[-2])
+                if new_head_dir is None:
+                    continue
+
+            if endpoint == 'tail':
+                arrow.cells.pop(0)
+            else:
+                arrow.cells.pop()
+                arrow.direction = new_head_dir
+
+            new_arrow = Arrow(cells=[stolen, cell], direction=direction)
+            board._grid[stolen[0]][stolen[1]] = new_arrow
+            board._grid[cell[0]][cell[1]] = new_arrow
+            board._arrows.append(new_arrow)
+            return True
+
+        return False
+
+    def _split_arrow_for_cell(
+        self,
+        board: Board,
+        rows: int,
+        cols: int,
+        cell: tuple[int, int],
+    ) -> bool:
+        r, c = cell
+        for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+            stolen = (r + dr, c + dc)
+            sr, sc = stolen
+            if not (0 <= sr < rows and 0 <= sc < cols):
+                continue
+            arrow = board.get_arrow_at(sr, sc)
+            if arrow is None or len(arrow.cells) <= 4:
+                continue
+
+            try:
+                index = arrow.cells.index(stolen)
+            except ValueError:
+                continue
+            if index == 0 or index == len(arrow.cells) - 1:
+                continue
+
+            left = arrow.cells[:index]
+            right = arrow.cells[index + 1:]
+            if len(left) == 1 or len(right) == 1:
+                continue
+
+            new_direction = self._direction_of(stolen, cell)
+            if new_direction is None:
+                continue
+
+            replacements: list[Arrow] = []
+            for segment in (left, right):
+                if len(segment) < 2:
+                    continue
+                direction = self._direction_of(segment[-2], segment[-1])
+                if direction is None:
+                    replacements = []
+                    break
+                replacements.append(Arrow(cells=list(segment), direction=direction))
+            if not replacements:
+                continue
+
+            arrow.alive = False
+            for old_cell in arrow.cells:
+                if board._grid[old_cell[0]][old_cell[1]] is arrow:
+                    board._grid[old_cell[0]][old_cell[1]] = None
+
+            for replacement in replacements:
+                board.place_arrow(replacement)
+            board.place_arrow(Arrow(cells=[stolen, cell], direction=new_direction))
+            return True
+
+        return False
 
     def _merge_remaining_cell(
         self,
