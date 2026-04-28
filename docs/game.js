@@ -28,7 +28,7 @@ const MAX_ZOOM = 5.0;
 const ZOOM_STEP = 1.15;
 const ERROR_FLASH_DURATION = 0.5;
 const FLY_OFF_DURATION = 0.6;
-const MAX_LEVEL = 50;
+const MAX_LEVEL = 54;
 const EASY_LIVES = 5;
 const HARD_LIVES = 3;
 const EASY_MISTAKE_PENALTY = 5;
@@ -59,6 +59,7 @@ const LEVEL_CONFIGS = [
   [270,275],[272,272],[275,275],[278,278],[280,285],
   [282,282],[285,285],[288,288],[290,295],[292,292],
   [295,295],[296,300],[298,298],[300,300],[300,300],
+  [300,300],[300,300],[300,300],[300,300],
 ];
 
 function funColorForArrow(cells, direction) {
@@ -511,6 +512,7 @@ class GameController {
 
   restartLevel() { this.startLevel(this.currentLevel); }
   goToLevelSelect() { this.phase = Phase.LEVEL_SELECT; prefetchLevel(this.currentLevel); }
+  goHome() { this.phase = Phase.MAIN_MENU; }
 }
 
 // Drawing helpers
@@ -785,6 +787,7 @@ class Renderer {
     ctx.textAlign = "center";
     ctx.font = "bold 28px Arial, sans-serif";
     ctx.fillText(ctrl.hardMode ? "Hard Mode" : "Select Level", this._w / 2, 50);
+    this._drawTextButton(ctx, this.homeButtonRect(), "Home", LEVEL_UNLOCKED_BTN);
 
     const totalW = LEVEL_BTN_COLS * LEVEL_BTN_SIZE + (LEVEL_BTN_COLS - 1) * LEVEL_BTN_GAP;
     const startX = (this._w - totalW) / 2;
@@ -843,6 +846,15 @@ class Renderer {
     return null;
   }
 
+  homeButtonRect() {
+    return { x: 14, y: 18, w: 78, h: 34 };
+  }
+
+  homeHitTest(x, y) {
+    const btn = this.homeButtonRect();
+    return x >= btn.x && x <= btn.x + btn.w && y >= btn.y && y <= btn.y + btn.h;
+  }
+
   _drawHUD(ctx, ctrl) {
     ctx.fillStyle = HUD_TEXT_COLOR;
     ctx.font = "18px Arial, sans-serif";
@@ -853,7 +865,8 @@ class Renderer {
     ctx.fillText(`${mins}:${secs < 10 ? "0" : ""}${secs}`, 16, 32);
 
     ctx.textAlign = "right";
-    ctx.fillText(`Level ${ctrl.currentLevel}`, this._w - 16, 32);
+    ctx.fillText(`Level ${ctrl.currentLevel}`, this._w - 92, 32);
+    this._drawTextButton(ctx, this.exitButtonRect(), "Exit", LEVEL_UNLOCKED_BTN);
 
     const hs = 18, spacing = 26;
     const total = ctrl.maxLives * spacing;
@@ -869,6 +882,28 @@ class Renderer {
       ctx.fillStyle = "#e8a735";
       ctx.fillText(`x${Math.min(ctrl.combo, 5)} combo`, 120, 52);
     }
+  }
+
+  exitButtonRect() {
+    return { x: this._w - 74, y: 12, w: 60, h: 30 };
+  }
+
+  exitHitTest(x, y) {
+    const btn = this.exitButtonRect();
+    return x >= btn.x && x <= btn.x + btn.w && y >= btn.y && y <= btn.y + btn.h;
+  }
+
+  _drawTextButton(ctx, btn, label, color) {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.roundRect(btn.x, btn.y, btn.w, btn.h, 8);
+    ctx.fill();
+    ctx.fillStyle = "#fff";
+    ctx.font = "bold 14px Arial, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(label, btn.x + btn.w / 2, btn.y + btn.h / 2);
+    ctx.textBaseline = "alphabetic";
   }
 
   _drawGridDots(ctx, ctrl) {
@@ -1206,6 +1241,11 @@ function setupInput(canvas, renderer, ctrl) {
       return;
     }
     if (phase === Phase.LEVEL_SELECT) {
+      if (renderer.homeHitTest(x, y)) {
+        ctrl.goHome();
+        renderer._levelScrollY = 0;
+        return;
+      }
       const lvl = renderer.levelHitTest(x, y, ctrl);
       if (lvl !== null && lvl <= ctrl.maxLevelUnlocked) {
         ctrl.startLevel(lvl);
@@ -1218,6 +1258,11 @@ function setupInput(canvas, renderer, ctrl) {
     }
     if (phase === Phase.GAME_OVER) {
       ctrl.restartLevel();
+      return;
+    }
+    if ((phase === Phase.PLAYING || phase === Phase.ANIMATING) && renderer.exitHitTest(x, y)) {
+      ctrl.goToLevelSelect();
+      renderer._cameraLevel = -1;
       return;
     }
     if (phase === Phase.PLAYING) {
