@@ -14,6 +14,9 @@ from game.puzzle_data import save_puzzle
 from game.direction import DIRECTION_VECTORS
 
 
+MAX_GENERATED_LEVEL = 20
+
+
 def save_web_json(level: int, board, solution, dest_dir: Path) -> Path:
     arrows_data = []
     arrow_id_map = {}
@@ -70,7 +73,7 @@ def main() -> None:
     dest_web.mkdir(parents=True, exist_ok=True)
 
     gen = PuzzleGenerator()
-    max_level = get_max_level()
+    max_level = min(get_max_level(), MAX_GENERATED_LEVEL)
     total_time = 0.0
 
     for level in range(1, max_level + 1):

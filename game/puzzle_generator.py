@@ -1,6 +1,5 @@
 ## imports
 from __future__ import annotations
-from functools import lru_cache
 import random
 from game.board import Board
 from game.arrow import Arrow
@@ -22,232 +21,971 @@ class PuzzleGenerator:
         if rng is None:
             rng = random.Random()
 
-        return self._build_tiled_puzzle(rows, cols, min_length, max_length, rng)
-
-    def _build_tiled_puzzle(
-        self,
-        rows: int,
-        cols: int,
-        min_length: int,
-        max_length: int,
-        rng: random.Random,
-    ) -> tuple[Board, list[Arrow]]:
-        board = Board(rows, cols)
-        solution: list[Arrow] = []
-
-        r = 0
-        band_index = 0
-        while r < rows:
-            band_height = self._pick_band_height(rows - r, rng)
-            max_width = max(2, max_length // band_height)
-            widths = self._partition_widths(cols, max_width, rng)
-            exit_dir = (
-                Direction.LEFT
-                if (band_index + rng.randint(0, 1)) % 2 == 0
-                else Direction.RIGHT
-            )
-
-            c = 0
-            band_arrows: list[Arrow] = []
-            for width in widths:
-                # keep escape arrows from advertising the solution on the border.
-                inset_exit = (
-                    (exit_dir == Direction.LEFT and c == 0)
-                    or (exit_dir == Direction.RIGHT and c + width == cols)
-                )
-                cells = self._serpentine_cells(
-                    r, band_height, c, width, exit_dir, inset_exit
-                )
-                direction = self._direction_of(cells[-2], cells[-1])
-                if direction is None:
-                    direction = exit_dir
-                arrow = Arrow(cells=cells, direction=direction)
-                board.place_arrow(arrow)
-                band_arrows.append(arrow)
-                c += width
-
-            if exit_dir == Direction.LEFT:
-                solution.extend(band_arrows)
-            else:
-                solution.extend(reversed(band_arrows))
-
-            r += band_height
-            band_index += 1
-
-        return board, solution
-
-    def _pick_band_height(self, remaining_rows: int, rng: random.Random) -> int:
-        if remaining_rows <= 2:
-            return remaining_rows
-        if remaining_rows == 3:
-            return 3
-        band_height = 4 if rng.random() < 0.35 else 2
-        if remaining_rows - band_height == 1:
-            return 2
-        return min(band_height, remaining_rows)
-
-    def _partition_widths(
-        self, cols: int, max_width: int, rng: random.Random
-    ) -> list[int]:
-        if max_width >= 3 and cols >= 6:
-            middle_total = cols - 6
-            if middle_total == 1 and max_width >= 4:
-                return [4, 3]
-            if middle_total != 1:
-                return [3] + self._partition_inner_widths(
-                    middle_total, max_width, rng
-                ) + [3]
-
-        return self._partition_inner_widths(cols, max_width, rng)
-
-    def _partition_inner_widths(
-        self, cols: int, max_width: int, rng: random.Random
-    ) -> list[int]:
-        widths: list[int] = []
-        remaining = cols
-        max_width = max(2, max_width)
-
-        while remaining:
-            if remaining <= max_width:
-                if remaining == 1 and widths:
-                    widths[-1] -= 1
-                    widths.append(2)
-                else:
-                    widths.append(remaining)
-                break
-
-            high = min(max_width, remaining - 2)
-            width = rng.randint(2, high)
-            if remaining - width == 1:
-                width += 1
-            widths.append(width)
-            remaining -= width
-
-        return widths
-
-    def _serpentine_cells(
-        self,
-        row: int,
-        height: int,
-        col: int,
-        width: int,
-        exit_dir: Direction,
-        inset_exit: bool = False,
-    ) -> list[tuple[int, int]]:
-        if inset_exit and height >= 2 and width >= 3:
-            shape = self._inset_exit_shape(height, width, exit_dir)
-            if shape:
-                return [(row + r, col + c) for r, c in shape]
-
-        exit_left = exit_dir == Direction.LEFT
-        left_to_right = exit_left if height % 2 == 0 else not exit_left
-        cells: list[tuple[int, int]] = []
-
-        for r in range(row, row + height):
-            if left_to_right:
-                cells.extend((r, c) for c in range(col, col + width))
-            else:
-                cells.extend((r, c) for c in range(col + width - 1, col - 1, -1))
-            left_to_right = not left_to_right
-
-        return cells
-
-    def _inset_exit_shape(
-        self, height: int, width: int, exit_dir: Direction
-    ) -> tuple[tuple[int, int], ...]:
-        left_shape = self._inset_left_shape(height, width)
-        if exit_dir == Direction.LEFT:
-            return left_shape
-        return tuple((r, width - 1 - c) for r, c in left_shape)
-
-    def _inset_left_shape(
-        self, height: int, width: int
-    ) -> tuple[tuple[int, int], ...]:
-        if height % 2 == 0:
-            cells: list[tuple[int, int]] = [
-                (r, 0) for r in range(height - 1, -1, -1)
-            ]
-            left_to_right = True
-            for r in range(height):
-                if left_to_right:
-                    cells.extend((r, c) for c in range(1, width))
-                else:
-                    cells.extend((r, c) for c in range(width - 1, 0, -1))
-                left_to_right = not left_to_right
-            return tuple(cells)
-
-        return self._searched_inset_left_shape(height, width)
-
-    @staticmethod
-    @lru_cache(maxsize=None)
-    def _searched_inset_left_shape(
-        height: int, width: int
-    ) -> tuple[tuple[int, int], ...]:
-        cells = {(r, c) for r in range(height) for c in range(width)}
-        dirs = [(-1, 0), (1, 0), (0, -1), (0, 1)]
-
-        def neighbours(
-            cell: tuple[int, int], unvisited: set[tuple[int, int]]
-        ) -> list[tuple[int, int]]:
-            r, c = cell
-            result = [
-                (r + dr, c + dc)
-                for dr, dc in dirs
-                if (r + dr, c + dc) in unvisited
-            ]
-            result.sort(
-                key=lambda n: sum(
-                    (n[0] + dr, n[1] + dc) in unvisited for dr, dc in dirs
-                )
-            )
-            return result
-
-        for end_row in range(height):
-            end = (end_row, 1)
-            prev = (end_row, 2)
-            for start in sorted(cells):
-                if start in (end, prev):
-                    continue
-                path = [start]
-                unvisited = set(cells)
-                unvisited.remove(start)
-
-                def dfs(cur: tuple[int, int]) -> bool:
-                    if len(path) == height * width:
-                        return cur == end and path[-2] == prev
-
-                    for nxt in neighbours(cur, unvisited):
-                        if nxt == end and len(path) != height * width - 1:
-                            continue
-                        if nxt == prev and len(path) != height * width - 2:
-                            continue
-                        unvisited.remove(nxt)
-                        path.append(nxt)
-                        if dfs(nxt):
-                            return True
-                        path.pop()
-                        unvisited.add(nxt)
-                    return False
-
-                if dfs(start):
-                    return tuple(path)
-
-        return ()
-
-    def _generate_attempted_walk_puzzle(
-        self,
-        rows: int,
-        cols: int,
-        min_length: int,
-        max_length: int,
-        rng: random.Random,
-    ) -> tuple[Board, list[Arrow]]:
         for _ in range(MAX_ATTEMPTS):
-            result = self._build_puzzle(rows, cols, min_length, max_length, rng)
+            result = self._build_ranked_random_puzzle(
+                rows, cols, min_length, max_length, rng
+            )
             if result is not None:
                 return result
 
-        return self._fallback(rows, cols)
+        raise RuntimeError(
+            f'could not generate a full solvable puzzle for {rows}x{cols}'
+        )
+
+    def _build_ranked_random_puzzle(
+        self,
+        rows: int,
+        cols: int,
+        min_length: int,
+        max_length: int,
+        rng: random.Random,
+    ) -> tuple[Board, list[Arrow]] | None:
+        rank, clear_dirs = self._visibility_peel(rows, cols, rng)
+        paths = self._ranked_random_paths(
+            rows, cols, min_length, max_length, rank, clear_dirs, rng
+        )
+        if not paths:
+            return None
+
+        board = Board(rows, cols)
+        for cells, direction in paths:
+            if len(cells) < 2:
+                return None
+            if self._direction_of(cells[-2], cells[-1]) != direction:
+                return None
+            board.place_arrow(Arrow(cells=cells, direction=direction))
+
+        self._fill_remaining(board, rows, cols)
+        if not self._is_fully_covered(board, rows, cols):
+            return None
+
+        solution = self._solve(board)
+        if solution is None or len(solution) != len(board.living_arrows()):
+            return None
+
+        return board, solution
+
+    def _visibility_peel(
+        self, rows: int, cols: int, rng: random.Random
+    ) -> tuple[
+        dict[tuple[int, int], int],
+        dict[tuple[int, int], list[Direction]],
+    ]:
+        removed = [[False] * cols for _ in range(rows)]
+        rank: dict[tuple[int, int], int] = {}
+        clear_dirs: dict[tuple[int, int], list[Direction]] = {}
+        left = [0] * rows
+        right = [cols - 1] * rows
+        top = [0] * cols
+        bottom = [rows - 1] * cols
+        entries: list[tuple[int, int, Direction]] = []
+
+        def add_entry(r: int, c: int, direction: Direction) -> None:
+            if 0 <= r < rows and 0 <= c < cols and not removed[r][c]:
+                entries.append((r, c, direction))
+
+        add_entry(0, 0, Direction.UP)
+        add_entry(0, 0, Direction.LEFT)
+        add_entry(0, cols - 1, Direction.UP)
+        add_entry(0, cols - 1, Direction.RIGHT)
+        add_entry(rows - 1, 0, Direction.DOWN)
+        add_entry(rows - 1, 0, Direction.LEFT)
+        add_entry(rows - 1, cols - 1, Direction.DOWN)
+        add_entry(rows - 1, cols - 1, Direction.RIGHT)
+
+        step = 0
+        while step < rows * cols:
+            if not entries:
+                return {}, {}
+
+            i = rng.randrange(len(entries))
+            r, c, direction = entries[i]
+            entries[i] = entries[-1]
+            entries.pop()
+            if removed[r][c]:
+                continue
+
+            valid: list[Direction] = []
+            if c == left[r]:
+                valid.append(Direction.LEFT)
+            if c == right[r]:
+                valid.append(Direction.RIGHT)
+            if r == top[c]:
+                valid.append(Direction.UP)
+            if r == bottom[c]:
+                valid.append(Direction.DOWN)
+            if direction not in valid and not valid:
+                continue
+
+            rng.shuffle(valid)
+            removed[r][c] = True
+            rank[(r, c)] = step
+            clear_dirs[(r, c)] = valid
+            step += 1
+
+            while left[r] < cols and removed[r][left[r]]:
+                left[r] += 1
+            while right[r] >= 0 and removed[r][right[r]]:
+                right[r] -= 1
+            while top[c] < rows and removed[top[c]][c]:
+                top[c] += 1
+            while bottom[c] >= 0 and removed[bottom[c]][c]:
+                bottom[c] -= 1
+
+            if left[r] < cols:
+                add_entry(r, left[r], Direction.LEFT)
+            if right[r] >= 0:
+                add_entry(r, right[r], Direction.RIGHT)
+            if top[c] < rows:
+                add_entry(top[c], c, Direction.UP)
+            if bottom[c] >= 0:
+                add_entry(bottom[c], c, Direction.DOWN)
+
+        return rank, clear_dirs
+
+    def _ranked_random_paths(
+        self,
+        rows: int,
+        cols: int,
+        min_length: int,
+        max_length: int,
+        rank: dict[tuple[int, int], int],
+        clear_dirs: dict[tuple[int, int], list[Direction]],
+        rng: random.Random,
+    ) -> list[tuple[list[tuple[int, int]], Direction]]:
+        paths, unassigned = self._ranked_matching_paths(
+            rows, cols, rank, clear_dirs, rng
+        )
+        self._absorb_ranked_leftovers(paths, unassigned, rank, rng)
+        self._merge_ranked_paths(paths, min_length, max_length, rank, rng)
+        self._repair_ranked_head_leftovers(
+            paths, unassigned, rank, clear_dirs, rng
+        )
+        self._absorb_ranked_leftovers(paths, unassigned, rank, rng)
+        self._merge_ranked_paths(paths, min_length, max_length, rank, rng)
+        self._merge_ranked_outliers(paths, max_length, rank, rng)
+        return paths
+
+    def _ranked_matching_paths(
+        self,
+        rows: int,
+        cols: int,
+        rank: dict[tuple[int, int], int],
+        clear_dirs: dict[tuple[int, int], list[Direction]],
+        rng: random.Random,
+    ) -> tuple[
+        list[tuple[list[tuple[int, int]], Direction]],
+        set[tuple[int, int]],
+    ]:
+        left_cells = [
+            (r, c)
+            for r in range(rows)
+            for c in range(cols)
+            if (r + c) % 2 == 0
+        ]
+        edges: dict[tuple[int, int], list[tuple[int, int]]] = {}
+        directed: dict[
+            tuple[tuple[int, int], tuple[int, int]],
+            tuple[tuple[int, int], tuple[int, int], Direction],
+        ] = {}
+
+        for head in rank:
+            hr, hc = head
+            for direction in clear_dirs.get(head, []):
+                dr, dc = DIRECTION_VECTORS[direction]
+                previous = (hr - dr, hc - dc)
+                if previous not in rank or rank[previous] <= rank[head]:
+                    continue
+                left, right = (
+                    (head, previous)
+                    if (head[0] + head[1]) % 2 == 0
+                    else (previous, head)
+                )
+                edges.setdefault(left, []).append(right)
+                directed[(left, right)] = (head, previous, direction)
+
+        for options in edges.values():
+            rng.shuffle(options)
+
+        matched = self._hopcroft_karp(left_cells, edges)
+        paths: list[tuple[list[tuple[int, int]], Direction]] = []
+        used: set[tuple[int, int]] = set()
+        for left, right in matched.items():
+            if right is None:
+                continue
+            head, previous, direction = directed[(left, right)]
+            paths.append(([previous, head], direction))
+            used.add(head)
+            used.add(previous)
+
+        return paths, set(rank) - used
+
+    def _hopcroft_karp(
+        self,
+        left_cells: list[tuple[int, int]],
+        edges: dict[tuple[int, int], list[tuple[int, int]]],
+    ) -> dict[tuple[int, int], tuple[int, int] | None]:
+        from collections import deque
+
+        pair_left: dict[tuple[int, int], tuple[int, int] | None] = {
+            cell: None for cell in left_cells
+        }
+        pair_right: dict[tuple[int, int], tuple[int, int]] = {}
+        dist: dict[tuple[int, int], int] = {}
+
+        def bfs() -> bool:
+            queue: deque[tuple[int, int]] = deque()
+            found = False
+            for cell in left_cells:
+                if pair_left[cell] is None:
+                    dist[cell] = 0
+                    queue.append(cell)
+                else:
+                    dist[cell] = 10**9
+
+            while queue:
+                cell = queue.popleft()
+                for neighbour in edges.get(cell, []):
+                    paired = pair_right.get(neighbour)
+                    if paired is None:
+                        found = True
+                    elif dist[paired] == 10**9:
+                        dist[paired] = dist[cell] + 1
+                        queue.append(paired)
+            return found
+
+        def dfs(cell: tuple[int, int]) -> bool:
+            for neighbour in edges.get(cell, []):
+                paired = pair_right.get(neighbour)
+                if paired is None or (
+                    dist[paired] == dist[cell] + 1 and dfs(paired)
+                ):
+                    pair_left[cell] = neighbour
+                    pair_right[neighbour] = cell
+                    return True
+            dist[cell] = 10**9
+            return False
+
+        while bfs():
+            for cell in left_cells:
+                if pair_left[cell] is None:
+                    dfs(cell)
+
+        return pair_left
+
+    def _ranked_head_candidates(
+        self,
+        head: tuple[int, int],
+        unassigned: set[tuple[int, int]],
+        rank: dict[tuple[int, int], int],
+        clear_dirs: dict[tuple[int, int], list[Direction]],
+    ) -> list[tuple[Direction, tuple[int, int]]]:
+        hr, hc = head
+        candidates: list[tuple[Direction, tuple[int, int]]] = []
+        for direction in clear_dirs.get(head, []):
+            dr, dc = DIRECTION_VECTORS[direction]
+            previous = (hr - dr, hc - dc)
+            if previous in unassigned and rank[previous] > rank[head]:
+                candidates.append((direction, previous))
+        return candidates
+
+    def _ranked_tail_step(
+        self,
+        path: list[tuple[int, int]],
+        unassigned: set[tuple[int, int]],
+        head_rank: int,
+        rank: dict[tuple[int, int], int],
+        rng: random.Random,
+    ) -> tuple[int, int] | None:
+        r, c = path[-1]
+        neighbours = [
+            (r + dr, c + dc)
+            for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1))
+            if (r + dr, c + dc) in unassigned
+            and rank[(r + dr, c + dc)] > head_rank
+        ]
+        if not neighbours:
+            return None
+
+        rng.shuffle(neighbours)
+        if len(path) >= 2 and rng.random() < 0.65:
+            last_step = (
+                path[-1][0] - path[-2][0],
+                path[-1][1] - path[-2][1],
+            )
+            turning = [
+                n
+                for n in neighbours
+                if (n[0] - r, n[1] - c) != last_step
+            ]
+            if turning:
+                neighbours = turning
+
+        neighbours.sort(
+            key=lambda n: sum(
+                (n[0] + dr, n[1] + dc) in unassigned
+                for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1))
+            )
+        )
+        return rng.choice(neighbours[: min(4, len(neighbours))])
+
+    def _absorb_ranked_leftovers(
+        self,
+        paths: list[tuple[list[tuple[int, int]], Direction]],
+        unassigned: set[tuple[int, int]],
+        rank: dict[tuple[int, int], int],
+        rng: random.Random,
+    ) -> None:
+        cell_to_path: dict[tuple[int, int], int] = {}
+        for i, (cells, _) in enumerate(paths):
+            for cell in cells:
+                cell_to_path[cell] = i
+
+        changed = True
+        while changed and unassigned:
+            changed = False
+            for cell in sorted(list(unassigned), key=rank.get, reverse=True):
+                options: list[tuple[int, int]] = []
+                r, c = cell
+                for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                    neighbour = (r + dr, c + dc)
+                    path_index = cell_to_path.get(neighbour)
+                    if path_index is None:
+                        continue
+                    cells, _ = paths[path_index]
+                    if cells[0] == neighbour and rank[cell] > rank[cells[-1]]:
+                        options.append((path_index, 0))
+
+                    if rank[cell] <= rank[cells[-1]]:
+                        continue
+                    for insert_at in range(1, len(cells)):
+                        if not (
+                            self._are_adjacent(cells[insert_at - 1], cell)
+                            and self._are_adjacent(cell, cells[insert_at])
+                        ):
+                            continue
+                        if insert_at == len(cells) - 1:
+                            _, direction = paths[path_index]
+                            if self._direction_of(cell, cells[-1]) != direction:
+                                continue
+                        options.append((path_index, insert_at))
+
+                if not options:
+                    continue
+
+                path_index, insert_at = rng.choice(options)
+                cells, direction = paths[path_index]
+                cells.insert(insert_at, cell)
+                paths[path_index] = (cells, direction)
+                cell_to_path[cell] = path_index
+                unassigned.remove(cell)
+                changed = True
+
+    def _repair_ranked_head_leftovers(
+        self,
+        paths: list[tuple[list[tuple[int, int]], Direction]],
+        unassigned: set[tuple[int, int]],
+        rank: dict[tuple[int, int], int],
+        clear_dirs: dict[tuple[int, int], list[Direction]],
+        rng: random.Random,
+    ) -> None:
+        changed = True
+        while changed and unassigned:
+            changed = False
+            cell_to_path = {
+                cell: i
+                for i, (cells, _) in enumerate(paths)
+                for cell in cells
+            }
+
+            for head in sorted(list(unassigned), key=rank.get):
+                options: list[
+                    tuple[int, Direction, tuple[int, int], str, int]
+                ] = []
+                hr, hc = head
+                for direction in clear_dirs.get(head, []):
+                    dr, dc = DIRECTION_VECTORS[direction]
+                    previous = (hr - dr, hc - dc)
+                    path_index = cell_to_path.get(previous)
+                    if path_index is None or rank[previous] <= rank[head]:
+                        continue
+
+                    cells, _ = paths[path_index]
+                    previous_index = cells.index(previous)
+                    if previous_index == 0 and len(cells) > 2:
+                        options.append(
+                            (path_index, direction, previous, 'steal_tail', 0)
+                        )
+                    elif (
+                        previous_index == 0
+                        and len(cells) == 2
+                        and rank[cells[-1]] > rank[head]
+                    ):
+                        options.append(
+                            (path_index, direction, previous, 'replace_pair', 0)
+                        )
+                    elif (
+                        previous_index < len(cells) - 2
+                        and all(rank[cell] > rank[head] for cell in cells[:previous_index + 1])
+                    ):
+                        options.append(
+                            (
+                                path_index,
+                                direction,
+                                previous,
+                                'split_prefix',
+                                previous_index,
+                            )
+                        )
+                    elif previous_index == len(cells) - 1 and all(
+                        rank[cell] > rank[head] for cell in cells
+                    ):
+                        options.append(
+                            (
+                                path_index,
+                                direction,
+                                previous,
+                                'replace_path',
+                                previous_index,
+                            )
+                        )
+
+                if not options:
+                    continue
+
+                path_index, direction, previous, mode, previous_index = rng.choice(
+                    options
+                )
+                cells, old_direction = paths[path_index]
+                if mode == 'replace_pair':
+                    paths[path_index] = ([cells[-1], previous, head], direction)
+                elif mode == 'replace_path':
+                    paths[path_index] = (cells + [head], direction)
+                elif mode == 'steal_tail':
+                    cells.pop(0)
+                    paths[path_index] = (cells, old_direction)
+                    paths.append(([previous, head], direction))
+                else:
+                    new_cells = cells[: previous_index + 1] + [head]
+                    old_cells = cells[previous_index + 1:]
+                    paths[path_index] = (old_cells, old_direction)
+                    paths.append((new_cells, direction))
+                unassigned.remove(head)
+                changed = True
+                break
+
+    def _merge_ranked_paths(
+        self,
+        paths: list[tuple[list[tuple[int, int]], Direction]],
+        min_length: int,
+        max_length: int,
+        rank: dict[tuple[int, int], int],
+        rng: random.Random,
+    ) -> None:
+        active = [True] * len(paths)
+        cell_to_path = {
+            cell: i
+            for i, (cells, _) in enumerate(paths)
+            for cell in cells
+        }
+        order = list(range(len(paths)))
+        rng.shuffle(order)
+
+        for path_index in order:
+            if not active[path_index]:
+                continue
+            while len(paths[path_index][0]) < max(min_length + 2, max_length // 2):
+                match = self._find_ranked_merge(
+                    path_index,
+                    paths,
+                    active,
+                    cell_to_path,
+                    max_length,
+                    rank,
+                    rng,
+                )
+                if match is None:
+                    break
+                other_index, reverse_other = match
+                cells, direction = paths[path_index]
+                other_cells, _ = paths[other_index]
+                if reverse_other:
+                    other_cells = list(reversed(other_cells))
+                paths[path_index] = (other_cells + cells, direction)
+                for cell in other_cells:
+                    cell_to_path[cell] = path_index
+                active[other_index] = False
+
+        live = [path for i, path in enumerate(paths) if active[i]]
+        paths[:] = live
+
+    def _find_ranked_merge(
+        self,
+        path_index: int,
+        paths: list[tuple[list[tuple[int, int]], Direction]],
+        active: list[bool],
+        cell_to_path: dict[tuple[int, int], int],
+        max_length: int,
+        rank: dict[tuple[int, int], int],
+        rng: random.Random,
+        prefer_long: bool = False,
+    ) -> tuple[int, bool] | None:
+        cells, _ = paths[path_index]
+        head_rank = rank[cells[-1]]
+        tail = cells[0]
+        candidates: list[tuple[int, bool]] = []
+
+        for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+            neighbour = (tail[0] + dr, tail[1] + dc)
+            other_index = cell_to_path.get(neighbour)
+            if (
+                other_index is None
+                or other_index == path_index
+                or not active[other_index]
+            ):
+                continue
+            other_cells, _ = paths[other_index]
+            if len(cells) + len(other_cells) > max_length:
+                continue
+            if rank[other_cells[-1]] <= head_rank:
+                continue
+            if other_cells[-1] == neighbour:
+                candidates.append((other_index, False))
+            if other_cells[0] == neighbour:
+                candidates.append((other_index, True))
+
+        if not candidates:
+            return None
+        if prefer_long:
+            rng.shuffle(candidates)
+            candidates.sort(
+                key=lambda item: len(paths[item[0]][0]), reverse=True
+            )
+            return candidates[0]
+        return rng.choice(candidates)
+
+    def _merge_ranked_outliers(
+        self,
+        paths: list[tuple[list[tuple[int, int]], Direction]],
+        max_length: int,
+        rank: dict[tuple[int, int], int],
+        rng: random.Random,
+    ) -> None:
+        if not paths:
+            return
+
+        desired = 1 if len(rank) < 12000 else 2
+        min_target = max(max_length + 12, max_length * 2)
+        long_limit = max(min_target, min(max_length * 4, 120))
+        active = [True] * len(paths)
+        cell_to_path = {
+            cell: i
+            for i, (cells, _) in enumerate(paths)
+            for cell in cells
+        }
+        made = 0
+
+        while made < desired:
+            candidates = [
+                i
+                for i, (cells, _) in enumerate(paths)
+                if active[i] and len(cells) < long_limit
+            ]
+            if not candidates:
+                break
+
+            rng.shuffle(candidates)
+            candidates.sort(key=lambda i: len(paths[i][0]), reverse=True)
+            candidates = candidates[:240]
+            estimates = {
+                i: self._estimate_ranked_outlier_len(
+                    i, paths, active, cell_to_path, long_limit, rank
+                )
+                for i in candidates
+            }
+            candidates = [
+                i for i in candidates if estimates[i] > len(paths[i][0])
+            ]
+            if not candidates:
+                break
+
+            rng.shuffle(candidates)
+            candidates.sort(
+                key=lambda i: (estimates[i], len(paths[i][0])),
+                reverse=True,
+            )
+            grew = False
+            for path_index in candidates:
+                if not active[path_index]:
+                    continue
+
+                start_len = len(paths[path_index][0])
+                while len(paths[path_index][0]) < long_limit:
+                    match = self._find_ranked_merge(
+                        path_index,
+                        paths,
+                        active,
+                        cell_to_path,
+                        long_limit,
+                        rank,
+                        rng,
+                        prefer_long=True,
+                    )
+                    if match is None:
+                        break
+
+                    other_index, reverse_other = match
+                    cells, direction = paths[path_index]
+                    other_cells, _ = paths[other_index]
+                    if reverse_other:
+                        other_cells = list(reversed(other_cells))
+                    paths[path_index] = (other_cells + cells, direction)
+                    for cell in other_cells:
+                        cell_to_path[cell] = path_index
+                    active[other_index] = False
+
+                if len(paths[path_index][0]) > start_len:
+                    made += 1
+                    grew = True
+                    break
+
+            if not grew:
+                break
+
+        live = [path for i, path in enumerate(paths) if active[i]]
+        paths[:] = live
+
+    def _estimate_ranked_outlier_len(
+        self,
+        path_index: int,
+        paths: list[tuple[list[tuple[int, int]], Direction]],
+        active: list[bool],
+        cell_to_path: dict[tuple[int, int], int],
+        long_limit: int,
+        rank: dict[tuple[int, int], int],
+    ) -> int:
+        cells, _ = paths[path_index]
+        head_rank = rank[cells[-1]]
+        tail = cells[0]
+        total = len(cells)
+        used = {path_index}
+
+        while total < long_limit:
+            options: list[tuple[int, tuple[int, int]]] = []
+            for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                neighbour = (tail[0] + dr, tail[1] + dc)
+                other_index = cell_to_path.get(neighbour)
+                if (
+                    other_index is None
+                    or other_index in used
+                    or not active[other_index]
+                ):
+                    continue
+
+                other_cells, _ = paths[other_index]
+                if total + len(other_cells) > long_limit:
+                    continue
+                if rank[other_cells[-1]] <= head_rank:
+                    continue
+                if other_cells[-1] == neighbour:
+                    options.append((other_index, other_cells[0]))
+                if other_cells[0] == neighbour:
+                    options.append((other_index, other_cells[-1]))
+
+            if not options:
+                break
+
+            options.sort(
+                key=lambda item: len(paths[item[0]][0]), reverse=True
+            )
+            other_index, next_tail = options[0]
+            used.add(other_index)
+            total += len(paths[other_index][0])
+            tail = next_tail
+
+        return total
+
+    def _build_random_cover_puzzle(
+        self,
+        rows: int,
+        cols: int,
+        min_length: int,
+        max_length: int,
+        rng: random.Random,
+    ) -> tuple[Board, list[Arrow]] | None:
+        paths = self._random_path_cover(rows, cols, min_length, max_length, rng)
+        paths = self._repair_single_cell_paths(paths)
+        if any(len(path) < 2 for path in paths):
+            return None
+        if rows * cols / len(paths) < 5.5:
+            return None
+
+        covered = {cell for path in paths for cell in path}
+        if len(covered) != rows * cols:
+            return None
+
+        board = Board(rows, cols)
+        for path in paths:
+            direction = self._direction_of(path[-2], path[-1])
+            if direction is None:
+                return None
+            board.place_arrow(Arrow(cells=path, direction=direction))
+
+        solution = self._solve(board)
+        if solution is None or len(solution) != len(board.living_arrows()):
+            return None
+
+        return board, solution
+
+    def _random_path_cover(
+        self,
+        rows: int,
+        cols: int,
+        min_length: int,
+        max_length: int,
+        rng: random.Random,
+    ) -> list[list[tuple[int, int]]]:
+        cells = [(r, c) for r in range(rows) for c in range(cols)]
+        unvisited = set(cells)
+        paths: list[list[tuple[int, int]]] = []
+
+        while unvisited:
+            start = rng.choice(cells)
+            while start not in unvisited:
+                start = rng.choice(cells)
+            path = [start]
+            unvisited.remove(start)
+            target = self._pick_length(min_length, max_length, rng)
+
+            while len(path) < target:
+                r, c = path[-1]
+                neighbours = [
+                    (r + dr, c + dc)
+                    for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1))
+                    if (r + dr, c + dc) in unvisited
+                ]
+                if not neighbours:
+                    break
+
+                rng.shuffle(neighbours)
+                neighbours.sort(
+                    key=lambda n: sum(
+                        (n[0] + dr, n[1] + dc) in unvisited
+                        for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1))
+                    )
+                )
+                if len(path) >= 2 and rng.random() < 0.65:
+                    last_step = (
+                        path[-1][0] - path[-2][0],
+                        path[-1][1] - path[-2][1],
+                    )
+                    turning = [
+                        n
+                        for n in neighbours
+                        if (n[0] - r, n[1] - c) != last_step
+                    ]
+                    if turning:
+                        neighbours = turning
+
+                path.append(rng.choice(neighbours[: min(3, len(neighbours))]))
+                unvisited.remove(path[-1])
+
+            paths.append(path)
+
+        return [path for path in paths if path]
+
+    def _repair_single_cell_paths(
+        self, paths: list[list[tuple[int, int]]]
+    ) -> list[list[tuple[int, int]]]:
+        paths = [list(path) for path in paths if path]
+        cell_to_path = {cell: i for i, path in enumerate(paths) for cell in path}
+
+        progress = True
+        while progress:
+            progress = False
+            for i, path in enumerate(paths):
+                if len(path) != 1:
+                    continue
+                cell = path[0]
+                if self._attach_single_cell_path(paths, cell_to_path, i, cell):
+                    progress = True
+
+        progress = True
+        while progress:
+            progress = False
+            for i, path in enumerate(paths):
+                if len(path) != 1:
+                    continue
+                cell = path[0]
+                if self._steal_cell_for_single_path(paths, cell_to_path, i, cell):
+                    progress = True
+
+        return [path for path in paths if path]
+
+    def _attach_single_cell_path(
+        self,
+        paths: list[list[tuple[int, int]]],
+        cell_to_path: dict[tuple[int, int], int],
+        path_index: int,
+        cell: tuple[int, int],
+    ) -> bool:
+        r, c = cell
+        for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+            neighbour = (r + dr, c + dc)
+            other_index = cell_to_path.get(neighbour)
+            if other_index is None or other_index == path_index:
+                continue
+            other = paths[other_index]
+            if other[0] == neighbour:
+                other.insert(0, cell)
+                paths[path_index] = []
+                cell_to_path[cell] = other_index
+                return True
+            if other[-1] == neighbour:
+                other.append(cell)
+                paths[path_index] = []
+                cell_to_path[cell] = other_index
+                return True
+            for insert_at in range(1, len(other)):
+                if (
+                    other[insert_at] == neighbour
+                    and self._are_adjacent(cell, other[insert_at - 1])
+                ):
+                    other.insert(insert_at, cell)
+                    paths[path_index] = []
+                    cell_to_path[cell] = other_index
+                    return True
+        return False
+
+    def _steal_cell_for_single_path(
+        self,
+        paths: list[list[tuple[int, int]]],
+        cell_to_path: dict[tuple[int, int], int],
+        path_index: int,
+        cell: tuple[int, int],
+    ) -> bool:
+        r, c = cell
+        for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+            neighbour = (r + dr, c + dc)
+            other_index = cell_to_path.get(neighbour)
+            if other_index is None or other_index == path_index:
+                continue
+            other = paths[other_index]
+            for steal_at, stolen in enumerate(other):
+                if stolen != neighbour:
+                    continue
+                left = other[:steal_at]
+                right = other[steal_at + 1:]
+                if len(left) == 1 and len(right) == 1:
+                    continue
+                stolen_path = [cell, stolen]
+                if len(left) == 1:
+                    stolen_path = [left[0], stolen, cell]
+                    left = []
+                elif len(right) == 1:
+                    stolen_path = [cell, stolen, right[0]]
+                    right = []
+                new_paths: list[list[tuple[int, int]]] = []
+                if left:
+                    new_paths.append(left)
+                if right:
+                    new_paths.append(right)
+                new_paths.append(stolen_path)
+                paths[path_index] = []
+                paths[other_index] = []
+                start_index = len(paths)
+                paths.extend(new_paths)
+                for offset, path in enumerate(new_paths):
+                    for path_cell in path:
+                        cell_to_path[path_cell] = start_index + offset
+                return True
+        return False
+
+    def _solve_with_free_directions(self, board: Board) -> list[Arrow] | None:
+        sb = Board(board.rows, board.cols)
+        arrows = list(board.living_arrows())
+        for arrow in arrows:
+            arrow.alive = True
+            sb.place_arrow(arrow)
+
+        def orientations(arrow: Arrow) -> list[tuple[list[tuple[int, int]], Direction]]:
+            opts: list[tuple[list[tuple[int, int]], Direction]] = []
+            for cells in (list(arrow.cells), list(reversed(arrow.cells))):
+                aligned = self._direction_of(cells[-2], cells[-1])
+                directions: list[Direction] = []
+                if (
+                    aligned is not None
+                    and not self._is_border_exit(cells[-1], aligned, board.rows, board.cols)
+                ):
+                    directions.append(aligned)
+                for direction in Direction:
+                    if (
+                        direction not in directions
+                        and not self._is_border_exit(
+                            cells[-1], direction, board.rows, board.cols
+                        )
+                    ):
+                        directions.append(direction)
+                opts.extend((cells, direction) for direction in directions)
+            return opts
+
+        def find_blocker(
+            cells: list[tuple[int, int]], direction: Direction, arrow: Arrow
+        ) -> Arrow | None:
+            dr, dc = DIRECTION_VECTORS[direction]
+            r, c = cells[-1]
+            r += dr
+            c += dc
+            while 0 <= r < sb.rows and 0 <= c < sb.cols:
+                occ = sb._grid[r][c]
+                if occ is not None and occ is not arrow and occ.alive:
+                    return occ
+                r += dr
+                c += dc
+            return None
+
+        blocked_by: dict[int, list[tuple[Arrow, list[tuple[int, int]], Direction]]] = {}
+        freed: dict[int, tuple[list[tuple[int, int]], Direction]] = {}
+        queue: deque[Arrow] = deque()
+
+        for arrow in arrows:
+            for cells, direction in orientations(arrow):
+                blocker = find_blocker(cells, direction, arrow)
+                if blocker is None:
+                    if id(arrow) not in freed:
+                        freed[id(arrow)] = (cells, direction)
+                        queue.append(arrow)
+                else:
+                    blocked_by.setdefault(id(blocker), []).append(
+                        (arrow, cells, direction)
+                    )
+
+        order: list[Arrow] = []
+        while queue:
+            arrow = queue.popleft()
+            if not arrow.alive:
+                continue
+            cells, direction = freed[id(arrow)]
+            arrow.cells = cells
+            arrow.direction = direction
+            order.append(arrow)
+            sb.remove_arrow(arrow)
+
+            for blocked, cells, direction in blocked_by.pop(id(arrow), []):
+                if not blocked.alive or id(blocked) in freed:
+                    continue
+                new_blocker = find_blocker(cells, direction, blocked)
+                if new_blocker is None:
+                    freed[id(blocked)] = (cells, direction)
+                    queue.append(blocked)
+                else:
+                    blocked_by.setdefault(id(new_blocker), []).append(
+                        (blocked, cells, direction)
+                    )
+
+        for arrow in arrows:
+            arrow.alive = True
+        return order if len(order) == len(arrows) else None
 
     def _build_puzzle(
         self,
@@ -260,17 +998,7 @@ class PuzzleGenerator:
         board = Board(rows, cols)
         placement: list[Arrow] = []
 
-        center_r, center_c = rows / 2.0, cols / 2.0
-        all_cells = [(r, c) for r in range(rows) for c in range(cols)]
-        bands: dict[int, list[tuple[int, int]]] = {}
-        for r, c in all_cells:
-            d = int(max(abs(r - center_r), abs(c - center_c)))
-            bands.setdefault(d, []).append((r, c))
-        ordered: list[tuple[int, int]] = []
-        for d in sorted(bands):
-            g = bands[d]
-            rng.shuffle(g)
-            ordered.extend(g)
+        ordered = self._growth_order(rows, cols, rng)
 
         for r, c in ordered:
             if board.is_cell_occupied(r, c):
@@ -292,16 +1020,15 @@ class PuzzleGenerator:
         self._fill_gaps(board, rows, cols, placement)
 
         saved = {id(a): (list(a.cells), a.direction) for a in placement}
+        safe_coverage = self._covered_cell_count(board, rows, cols) / (rows * cols)
 
         self._fill_remaining(board, rows, cols)
         all_arrows = list(board.living_arrows())
         solver_order = self._solve(board)
-        if (
-            solver_order is not None
-            and len(solver_order) == len(all_arrows)
-            and self._is_fully_covered(board, rows, cols)
-        ):
-            return board, solver_order
+        if solver_order is not None and len(solver_order) == len(all_arrows):
+            coverage = self._covered_cell_count(board, rows, cols) / (rows * cols)
+            if coverage >= self._target_coverage(rows, cols):
+                return board, solver_order
 
         for a in placement:
             for r2, c2 in a.cells:
@@ -314,10 +1041,49 @@ class PuzzleGenerator:
             for r2, c2 in a.cells:
                 board._grid[r2][c2] = a
 
-        if not self._is_fully_covered(board, rows, cols):
+        coverage = safe_coverage
+        if coverage < self._target_coverage(rows, cols):
             return None
 
         return board, list(reversed(placement))
+
+    def _growth_order(
+        self, rows: int, cols: int, rng: random.Random
+    ) -> list[tuple[int, int]]:
+        seeds = [(rng.randrange(rows), rng.randrange(cols))]
+
+        ordered: list[tuple[int, int]] = []
+        frontier = list(seeds)
+        rng.shuffle(frontier)
+        visited = set(seeds)
+
+        while frontier:
+            i = rng.randrange(len(frontier))
+            cell = frontier.pop(i)
+            ordered.append(cell)
+            r, c = cell
+            neighbours = [(r - 1, c), (r + 1, c), (r, c - 1), (r, c + 1)]
+            rng.shuffle(neighbours)
+            for nr, nc in neighbours:
+                if (
+                    0 <= nr < rows
+                    and 0 <= nc < cols
+                    and (nr, nc) not in visited
+                ):
+                    visited.add((nr, nc))
+                    frontier.append((nr, nc))
+
+        return ordered
+
+    def _target_coverage(self, rows: int, cols: int) -> float:
+        cells = rows * cols
+        if cells <= 12000:
+            return 0.94
+        if cells <= 50000:
+            return 0.90
+        if cells <= 120000:
+            return 0.87
+        return 0.84
 
     def _random_walk(
         self,
@@ -583,7 +1349,7 @@ class PuzzleGenerator:
                     if (
                         adj.cells[-1] == (nr, nc)
                         and can_merge((r, c), adj)
-                        and self._extend_safe_head(adj, (r, c))
+                        and self._extend_safe_head(adj, (r, c), rows, cols)
                     ):
                         board._grid[r][c] = adj
                         merged = True
@@ -630,27 +1396,6 @@ class PuzzleGenerator:
                     still2.append((r, c))
             uncovered = still2
 
-        if uncovered:
-            still3 = []
-            for r, c in uncovered:
-                if board.is_cell_occupied(r, c):
-                    continue
-                merged = False
-                for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
-                    nr, nc = r + dr, c + dc
-                    if not (0 <= nr < rows and 0 <= nc < cols):
-                        continue
-                    adj = board.get_arrow_at(nr, nc)
-                    if adj is None or not can_merge((r, c), adj):
-                        continue
-                    if self._insert_safe_spur_cell(adj, (r, c)):
-                        board._grid[r][c] = adj
-                        merged = True
-                        break
-                if not merged:
-                    still3.append((r, c))
-            uncovered = still3
-
         changed = True
         while changed and uncovered:
             changed = False
@@ -668,9 +1413,8 @@ class PuzzleGenerator:
                         continue
                     if (
                         self._extend_tail(adj, (r, c))
-                        or self._extend_safe_head(adj, (r, c))
+                        or self._extend_safe_head(adj, (r, c), rows, cols)
                         or self._splice_cell(adj, (r, c))
-                        or self._insert_safe_spur_cell(adj, (r, c))
                     ):
                         board._grid[r][c] = adj
                         merged = True
@@ -726,17 +1470,12 @@ class PuzzleGenerator:
                 return True
 
         for adj in candidates:
-            if self._extend_head(adj, cell):
+            if self._extend_head(adj, cell, rows, cols):
                 board._grid[r][c] = adj
                 return True
 
         for adj in candidates:
             if self._splice_cell(adj, cell):
-                board._grid[r][c] = adj
-                return True
-
-        for adj in candidates:
-            if self._insert_spur_cell(adj, cell):
                 board._grid[r][c] = adj
                 return True
 
@@ -748,21 +1487,29 @@ class PuzzleGenerator:
             return True
         return False
 
-    def _extend_head(self, arrow: Arrow, cell: tuple[int, int]) -> bool:
+    def _extend_head(
+        self, arrow: Arrow, cell: tuple[int, int], rows: int, cols: int
+    ) -> bool:
         if not self._are_adjacent(arrow.cells[-1], cell):
             return False
         new_dir = self._direction_of(arrow.cells[-1], cell)
         if new_dir is None:
             return False
+        if self._is_border_exit(cell, new_dir, rows, cols):
+            return False
         arrow.cells.append(cell)
         arrow.direction = new_dir
         return True
 
-    def _extend_safe_head(self, arrow: Arrow, cell: tuple[int, int]) -> bool:
+    def _extend_safe_head(
+        self, arrow: Arrow, cell: tuple[int, int], rows: int, cols: int
+    ) -> bool:
         if not self._are_adjacent(arrow.cells[-1], cell):
             return False
         new_dir = self._direction_of(arrow.cells[-1], cell)
         if new_dir != arrow.direction:
+            return False
+        if self._is_border_exit(cell, new_dir, rows, cols):
             return False
         arrow.cells.append(cell)
         return True
@@ -775,28 +1522,6 @@ class PuzzleGenerator:
             ):
                 arrow.cells.insert(i, cell)
                 return True
-        return False
-
-    def _insert_spur_cell(self, arrow: Arrow, cell: tuple[int, int]) -> bool:
-        for i, anchor in enumerate(arrow.cells):
-            if not self._are_adjacent(anchor, cell):
-                continue
-            arrow.cells[i + 1:i + 1] = [cell, anchor]
-            if i == len(arrow.cells) - 3:
-                new_dir = self._direction_of(cell, anchor)
-                if new_dir is not None:
-                    arrow.direction = new_dir
-            return True
-        return False
-
-    def _insert_safe_spur_cell(
-        self, arrow: Arrow, cell: tuple[int, int]
-    ) -> bool:
-        for i, anchor in enumerate(arrow.cells[:-1]):
-            if not self._are_adjacent(anchor, cell):
-                continue
-            arrow.cells[i + 1:i + 1] = [cell, anchor]
-            return True
         return False
 
     def _are_adjacent(
@@ -836,6 +1561,8 @@ class PuzzleGenerator:
         if best is None:
             return None
         _, _, cells, d = best
+        if self._is_border_exit(cells[-1], d, rows, cols):
+            return None
         return Arrow(cells=list(cells), direction=d)
 
     def _best_orientation(

@@ -26,7 +26,7 @@ const MAX_ZOOM = 5.0;
 const ZOOM_STEP = 1.15;
 const ERROR_FLASH_DURATION = 0.5;
 const FLY_OFF_DURATION = 0.6;
-const MAX_LEVEL = 50;
+const MAX_LEVEL = 20;
 
 const LEVEL_BTN_SIZE = 52;
 const LEVEL_BTN_GAP = 14;
