@@ -28,6 +28,7 @@ const MAX_ZOOM = 5.0;
 const ZOOM_STEP = 1.15;
 const ERROR_FLASH_DURATION = 0.5;
 const FLY_OFF_DURATION = 0.6;
+const GRID_DOT_REVEAL_DURATION = 0.45;
 const MAX_LEVEL = 54;
 const EASY_LIVES = 5;
 const HARD_LIVES = 3;
@@ -306,6 +307,7 @@ class GameController {
     this.totalArrows = 0;
     this.removedArrows = 0;
     this.funBursts = [];
+    this.revealingDots = new Map();
     this.levelStars = {};
     this._loadProgress();
   }
@@ -358,6 +360,7 @@ class GameController {
     this.combo = 0;
     this.removedArrows = 0;
     this.funBursts = [];
+    this.revealingDots.clear();
     this.phase = Phase.PLAYING;
 
     try {
@@ -470,6 +473,23 @@ class GameController {
     return this.funBursts.length > 0;
   }
 
+  _queueDotReveal(arrow) {
+    for (const [r, c] of arrow.cells) {
+      this.revealingDots.set(`${r},${c}`, { r, c, age: 0 });
+    }
+  }
+
+  _updateDotReveals(dt) {
+    if (this.revealingDots.size === 0) return false;
+    for (const [key, dot] of this.revealingDots) {
+      dot.age += dt;
+      if (dot.age >= GRID_DOT_REVEAL_DURATION) {
+        this.revealingDots.delete(key);
+      }
+    }
+    return this.revealingDots.size > 0;
+  }
+
   update(dt) {
     if (!this.board) return false;
     const timerActive = this.phase === Phase.PLAYING || this.phase === Phase.ANIMATING;
@@ -482,12 +502,14 @@ class GameController {
         a.flyProgress += dt / FLY_OFF_DURATION;
         if (a.flyProgress >= 1) {
           a.animatingFlyOff = false;
+          this._queueDotReveal(a);
           this.board.removeArrow(a);
         }
         anyAnim = true;
       }
     }
     const visualAnim = this._updateFunBursts(dt);
+    const dotAnim = this._updateDotReveals(dt);
     if (this.phase === Phase.ANIMATING && !anyAnim) {
       if (this.board.isEmpty()) {
         this.phase = Phase.LEVEL_COMPLETE;
@@ -496,7 +518,7 @@ class GameController {
         this.phase = Phase.PLAYING;
       }
     }
-    return anyAnim || visualAnim || timerActive;
+    return anyAnim || visualAnim || dotAnim || timerActive;
   }
 
   advanceLevel() {
@@ -914,15 +936,18 @@ class Renderer {
     );
     const visibleCells = (maxR - minR) * (maxC - minC);
     if (visibleCells > 40000) return;
-    const dotR = Math.max(0.5, cs * 0.07);
+    const dotR = Math.max(0.45, cs * 0.055);
     const csW = CELL_SIZE_WORLD;
     const z = this.camera.zoom, ox = this.camera.ox, oy = this.camera.oy;
     const hcs = csW / 2;
+    const revealDots = ctrl.revealingDots;
+    const hasReveals = revealDots.size > 0;
     ctx.fillStyle = GRID_DOT_COLOR;
     ctx.beginPath();
     for (let r = minR; r < maxR; r++) {
       for (let c = minC; c < maxC; c++) {
         if (ctrl.board._grid[r][c]) continue;
+        if (hasReveals && revealDots.has(`${r},${c}`)) continue;
         const sx = (c * csW + hcs) * z + ox;
         const sy = (r * csW + hcs) * z + oy;
         ctx.moveTo(sx + dotR, sy);
@@ -930,6 +955,25 @@ class Renderer {
       }
     }
     ctx.fill();
+
+    if (!hasReveals) return;
+    ctx.save();
+    ctx.fillStyle = GRID_DOT_COLOR;
+    for (const dot of revealDots.values()) {
+      const { r, c } = dot;
+      if (r < minR || r >= maxR || c < minC || c >= maxC) continue;
+      if (ctrl.board._grid[r][c]) continue;
+      const t = Math.min(1, dot.age / GRID_DOT_REVEAL_DURATION);
+      const eased = t * t * (3 - 2 * t);
+      const rr = dotR * (0.25 + 0.75 * eased);
+      const sx = (c * csW + hcs) * z + ox;
+      const sy = (r * csW + hcs) * z + oy;
+      ctx.globalAlpha = eased;
+      ctx.beginPath();
+      ctx.arc(sx, sy, rr, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
   }
 
   _drawArrows(ctx, ctrl) {
