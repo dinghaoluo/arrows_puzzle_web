@@ -14,6 +14,8 @@ const LEVEL_COMPLETE_COLOR = "#37b45a";
 const LEVEL_COMPLETED_BTN = "#37b45a";
 const LEVEL_UNLOCKED_BTN = "#505a6e";
 const LEVEL_LOCKED_BTN = "#b4b4b9";
+const FUN_BUTTON_COLOR = "#8a4dd8";
+const FUN_PARTICLE_GRAVITY = 42;
 
 const ARROW_HEAD_SIZE = 0.5;
 const ARROW_CORNER_RADIUS_RATIO = 0.22;
@@ -43,6 +45,7 @@ const DIRECTION_NAMES = ["up", "down", "left", "right"];
 const DIRECTION_ANGLES = { right: 0, up: -Math.PI / 2, left: Math.PI, down: Math.PI / 2 };
 const MOVE_DELTAS = { U: [-1, 0], D: [1, 0], L: [0, -1], R: [0, 1] };
 const PUZZLE_CACHE = new Map();
+const FUN_COLORS = ["#2f78d4", "#00856f", "#d85c34", "#b63f78", "#6c55cf", "#12829a", "#a46414"];
 
 const LEVEL_CONFIGS = [
   null, // index 0 unused
@@ -57,6 +60,21 @@ const LEVEL_CONFIGS = [
   [282,282],[285,285],[288,288],[290,295],[292,292],
   [295,295],[296,300],[298,298],[300,300],[300,300],
 ];
+
+function funColorForArrow(cells, direction) {
+  const tail = cells[0] || [0, 0];
+  const mid = cells[Math.floor(cells.length / 2)] || tail;
+  const head = cells[cells.length - 1] || tail;
+  const dir = DIRECTION_NAMES.indexOf(direction) + 1;
+  const hash = (
+    cells.length * 131 +
+    tail[0] * 17 + tail[1] * 29 +
+    mid[0] * 41 + mid[1] * 47 +
+    head[0] * 59 + head[1] * 67 +
+    dir * 83
+  );
+  return FUN_COLORS[Math.abs(hash) % FUN_COLORS.length];
+}
 
 // ── Phase enum ──
 const Phase = {
@@ -78,6 +96,7 @@ class Arrow {
     this.flyProgress = 0;
     this.animatingFlyOff = false;
     this._smoothWorld = null;
+    this.funColor = funColorForArrow(cells, direction);
   }
   get head() { return this.cells[this.cells.length - 1]; }
   get tail() { return this.cells[0]; }
@@ -273,6 +292,7 @@ class GameController {
     this.phase = Phase.MAIN_MENU;
     this.currentLevel = 1;
     this.hardMode = localStorage.getItem("arrows_mode") === "hard";
+    this.funMode = localStorage.getItem("arrows_fun") === "on";
     this.maxLives = this.hardMode ? HARD_LIVES : EASY_LIVES;
     this.lives = this.maxLives;
     this.totalMistakes = 0;
@@ -285,6 +305,7 @@ class GameController {
     this.combo = 0;
     this.totalArrows = 0;
     this.removedArrows = 0;
+    this.funBursts = [];
     this.levelStars = {};
     this._loadProgress();
   }
@@ -324,6 +345,11 @@ class GameController {
     this._loadProgress();
   }
 
+  toggleFun() {
+    this.funMode = !this.funMode;
+    localStorage.setItem("arrows_fun", this.funMode ? "on" : "off");
+  }
+
   async startLevel(level) {
     this.currentLevel = level;
     this.lives = this.maxLives;
@@ -331,6 +357,7 @@ class GameController {
     this.score = 0;
     this.combo = 0;
     this.removedArrows = 0;
+    this.funBursts = [];
     this.phase = Phase.PLAYING;
 
     try {
@@ -360,6 +387,7 @@ class GameController {
       const multiplier = Math.min(this.combo, 5);
       this.score += 100 * multiplier;
       this.removedArrows++;
+      this._spawnArrowBurst(arrow);
       this.phase = Phase.ANIMATING;
     } else {
       arrow.errorTimer = ERROR_FLASH_DURATION;
@@ -385,6 +413,64 @@ class GameController {
     return 1;
   }
 
+  _spawnArrowBurst(arrow) {
+    if (!this.funMode) return;
+    const [dr, dc] = DIRECTION_VECTORS[arrow.direction];
+    const [r, c] = arrow.head;
+    const x = (c + 0.5) * CELL_SIZE_WORLD;
+    const y = (r + 0.5) * CELL_SIZE_WORLD;
+    for (let i = 0; i < 12; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = 18 + Math.random() * 44;
+      this.funBursts.push({
+        x, y,
+        vx: Math.cos(angle) * speed + dc * 18,
+        vy: Math.sin(angle) * speed + dr * 18,
+        age: 0,
+        ttl: 0.38 + Math.random() * 0.28,
+        size: 1.8 + Math.random() * 1.8,
+        color: FUN_COLORS[(i + this.removedArrows) % FUN_COLORS.length],
+      });
+    }
+  }
+
+  _spawnLevelBurst() {
+    if (!this.funMode || !this.board) return;
+    const cx = this.board.cols * CELL_SIZE_WORLD / 2;
+    const cy = this.board.rows * CELL_SIZE_WORLD / 2;
+    const spreadX = Math.min(this.board.cols * CELL_SIZE_WORLD * 0.22, 180);
+    const spreadY = Math.min(this.board.rows * CELL_SIZE_WORLD * 0.22, 180);
+    for (let i = 0; i < 70; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = 42 + Math.random() * 92;
+      this.funBursts.push({
+        x: cx + (Math.random() - 0.5) * spreadX,
+        y: cy + (Math.random() - 0.5) * spreadY,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed - 36,
+        age: 0,
+        ttl: 0.85 + Math.random() * 0.45,
+        size: 2.4 + Math.random() * 2.2,
+        color: FUN_COLORS[i % FUN_COLORS.length],
+      });
+    }
+  }
+
+  _updateFunBursts(dt) {
+    if (this.funBursts.length === 0) return false;
+    const kept = [];
+    for (const p of this.funBursts) {
+      p.age += dt;
+      if (p.age >= p.ttl) continue;
+      p.vy += FUN_PARTICLE_GRAVITY * dt;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      kept.push(p);
+    }
+    this.funBursts = kept;
+    return this.funBursts.length > 0;
+  }
+
   update(dt) {
     if (!this.board) return false;
     const timerActive = this.phase === Phase.PLAYING || this.phase === Phase.ANIMATING;
@@ -402,10 +488,16 @@ class GameController {
         anyAnim = true;
       }
     }
+    const visualAnim = this._updateFunBursts(dt);
     if (this.phase === Phase.ANIMATING && !anyAnim) {
-      this.phase = this.board.isEmpty() ? Phase.LEVEL_COMPLETE : Phase.PLAYING;
+      if (this.board.isEmpty()) {
+        this.phase = Phase.LEVEL_COMPLETE;
+        this._spawnLevelBurst();
+      } else {
+        this.phase = Phase.PLAYING;
+      }
     }
-    return anyAnim || timerActive;
+    return anyAnim || visualAnim || timerActive;
   }
 
   advanceLevel() {
@@ -635,6 +727,7 @@ class Renderer {
       } else if (ctrl.phase === Phase.GAME_OVER) {
         this._drawOverlay(ctx, "Game Over", ARROW_ERROR_COLOR, "Tap to retry");
       }
+      if (ctrl.funMode) this._drawFunBursts(ctx, ctrl);
     }
   }
 
@@ -658,16 +751,34 @@ class Renderer {
     ctx.font = "bold 15px Arial, sans-serif";
     ctx.textBaseline = "middle";
     ctx.fillText(ctrl.hardMode ? "Easy Mode" : "Hard Mode", btn.x + btn.w / 2, btn.y + btn.h / 2);
+
+    const funBtn = this.funButtonRect();
+    ctx.fillStyle = ctrl.funMode ? FUN_BUTTON_COLOR : LEVEL_UNLOCKED_BTN;
+    ctx.beginPath();
+    ctx.roundRect(funBtn.x, funBtn.y, funBtn.w, funBtn.h, 8);
+    ctx.fill();
+    ctx.fillStyle = "#fff";
+    ctx.fillText(ctrl.funMode ? "Calm" : "Fun!", funBtn.x + funBtn.w / 2, funBtn.y + funBtn.h / 2);
     ctx.textBaseline = "alphabetic";
   }
 
   modeButtonRect() {
-    const w = 156, h = 42;
-    return { x: (this._w - w) / 2, y: this._h - h - 34, w, h };
+    const w = 156, h = 42, gap = 10;
+    return { x: (this._w - w) / 2, y: this._h - h * 2 - gap - 28, w, h };
+  }
+
+  funButtonRect() {
+    const btn = this.modeButtonRect();
+    return { x: btn.x, y: btn.y + btn.h + 10, w: btn.w, h: btn.h };
   }
 
   modeHitTest(x, y) {
     const btn = this.modeButtonRect();
+    return x >= btn.x && x <= btn.x + btn.w && y >= btn.y && y <= btn.y + btn.h;
+  }
+
+  funHitTest(x, y) {
+    const btn = this.funButtonRect();
     return x >= btn.x && x <= btn.x + btn.w && y >= btn.y && y <= btn.y + btn.h;
   }
 
@@ -807,63 +918,61 @@ class Renderer {
     const CHUNK = 500;
     const errorArrows = [];
     const flyArrows = [];
-
-    ctx.strokeStyle = ARROW_COLOR;
-    ctx.lineWidth = bw;
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    let pathCount = 0;
-    let headBuf = drawHeads ? [] : null;
-    ctx.beginPath();
+    const normalArrows = [];
+    const funGroups = ctrl.funMode ? new Map() : null;
 
     for (const arrow of arrows) {
       if (arrow.animatingFlyOff) { flyArrows.push(arrow); continue; }
       if (arrow.errorTimer > 0) { errorArrows.push(arrow); continue; }
-
-      const cells = arrow.cells;
-      if (useSmooth) {
-        const wpts = arrow.smoothWorld(crWorld);
-        ctx.moveTo(wpts[0][0] * z + oox, wpts[0][1] * z + ooy);
-        for (let i = 1; i < wpts.length; i++) {
-          ctx.lineTo(wpts[i][0] * z + oox, wpts[i][1] * z + ooy);
-        }
-        if (drawHeads) {
-          const last = wpts[wpts.length - 1];
-          headBuf.push(last[0] * z + oox, last[1] * z + ooy, arrow.direction);
-        }
+      if (funGroups) {
+        const color = arrow.funColor || ARROW_COLOR;
+        if (!funGroups.has(color)) funGroups.set(color, []);
+        funGroups.get(color).push(arrow);
       } else {
-        let sx = (cells[0][1] * csW + hcs) * z + oox;
-        let sy = (cells[0][0] * csW + hcs) * z + ooy;
-        ctx.moveTo(sx, sy);
-        for (let i = 1; i < cells.length; i++) {
-          sx = (cells[i][1] * csW + hcs) * z + oox;
-          sy = (cells[i][0] * csW + hcs) * z + ooy;
-          ctx.lineTo(sx, sy);
-        }
-        if (drawHeads) headBuf.push(sx, sy, arrow.direction);
-      }
-
-      if (++pathCount >= CHUNK) {
-        ctx.stroke();
-        ctx.beginPath();
-        pathCount = 0;
+        normalArrows.push(arrow);
       }
     }
-    if (pathCount > 0) ctx.stroke();
 
-    if (drawHeads && headBuf.length > 0) {
-      ctx.fillStyle = ARROW_COLOR;
+    const drawNormalBatch = (batch, color) => {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = bw;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      let pathCount = 0;
+      let headBuf = drawHeads ? [] : null;
       ctx.beginPath();
-      let hc = 0;
-      for (let i = 0; i < headBuf.length; i += 3) {
-        this._addHeadPath(ctx, headBuf[i], headBuf[i + 1], headSize, headBuf[i + 2]);
-        if (++hc >= CHUNK) {
-          ctx.fill();
+      for (const arrow of batch) {
+        const [hx, hy] = this._addArrowBodyPath(ctx, arrow, useSmooth, crWorld, z, oox, ooy, hcs, csW);
+        if (drawHeads) headBuf.push(hx, hy, arrow.direction);
+
+        if (++pathCount >= CHUNK) {
+          ctx.stroke();
           ctx.beginPath();
-          hc = 0;
+          pathCount = 0;
         }
       }
-      if (hc > 0) ctx.fill();
+      if (pathCount > 0) ctx.stroke();
+
+      if (drawHeads && headBuf.length > 0) {
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        let hc = 0;
+        for (let i = 0; i < headBuf.length; i += 3) {
+          this._addHeadPath(ctx, headBuf[i], headBuf[i + 1], headSize, headBuf[i + 2]);
+          if (++hc >= CHUNK) {
+            ctx.fill();
+            ctx.beginPath();
+            hc = 0;
+          }
+        }
+        if (hc > 0) ctx.fill();
+      }
+    };
+
+    if (funGroups) {
+      for (const [color, batch] of funGroups) drawNormalBatch(batch, color);
+    } else {
+      drawNormalBatch(normalArrows, ARROW_COLOR);
     }
 
     for (const arrow of errorArrows) {
@@ -908,8 +1017,31 @@ class Renderer {
     for (const arrow of flyArrows) {
       const centers = arrow.cells.map(([r, c]) => this.cellCenter(r, c));
       const cr = cs * ARROW_CORNER_RADIUS_RATIO;
-      this._drawArrowFlying(ctx, arrow, centers, cs, headSize, cr, bw);
+      this._drawArrowFlying(ctx, arrow, centers, cs, headSize, cr, bw, ctrl.funMode);
     }
+  }
+
+  _addArrowBodyPath(ctx, arrow, useSmooth, crWorld, z, oox, ooy, hcs, csW) {
+    const cells = arrow.cells;
+    if (useSmooth) {
+      const wpts = arrow.smoothWorld(crWorld);
+      ctx.moveTo(wpts[0][0] * z + oox, wpts[0][1] * z + ooy);
+      for (let i = 1; i < wpts.length; i++) {
+        ctx.lineTo(wpts[i][0] * z + oox, wpts[i][1] * z + ooy);
+      }
+      const last = wpts[wpts.length - 1];
+      return [last[0] * z + oox, last[1] * z + ooy];
+    }
+
+    let sx = (cells[0][1] * csW + hcs) * z + oox;
+    let sy = (cells[0][0] * csW + hcs) * z + ooy;
+    ctx.moveTo(sx, sy);
+    for (let i = 1; i < cells.length; i++) {
+      sx = (cells[i][1] * csW + hcs) * z + oox;
+      sy = (cells[i][0] * csW + hcs) * z + ooy;
+      ctx.lineTo(sx, sy);
+    }
+    return [sx, sy];
   }
 
   _addHeadPath(ctx, cx, cy, size, direction) {
@@ -928,7 +1060,7 @@ class Renderer {
     ctx.closePath();
   }
 
-  _drawArrowFlying(ctx, arrow, centers, cs, headSize, cr, bw) {
+  _drawArrowFlying(ctx, arrow, centers, cs, headSize, cr, bw, funMode) {
     const progress = arrow.flyProgress;
     const eased = 1 - (1 - progress) ** 2.5;
     const [dr, dc] = DIRECTION_VECTORS[arrow.direction];
@@ -967,10 +1099,35 @@ class Renderer {
     }
 
     const alpha = Math.max(0, 1 - eased * 0.8);
-    const color = lerpColor(ARROW_COLOR, ARROW_FLY_COLOR, eased * 0.6);
+    const baseColor = funMode ? (arrow.funColor || ARROW_COLOR) : ARROW_COLOR;
+    const color = lerpColor(baseColor, ARROW_FLY_COLOR, eased * 0.6);
     drawArrowBody(ctx, dense, color, bw, alpha, 0);
     const [fx, fy] = cellPos[cellPos.length - 1];
     drawArrowhead(ctx, fx, fy, headSize, arrow.direction, color, alpha);
+  }
+
+  _drawFunBursts(ctx, ctrl) {
+    if (!ctrl.funBursts || ctrl.funBursts.length === 0) return;
+    const cam = this.camera;
+    const particleZoom = Math.max(0.85, Math.min(1.6, cam.zoom));
+    ctx.save();
+    for (const p of ctrl.funBursts) {
+      const t = p.age / p.ttl;
+      const alpha = Math.max(0, (1 - t) ** 1.4);
+      const x = p.x * cam.zoom + cam.ox;
+      const y = p.y * cam.zoom + cam.oy;
+      const s = p.size * particleZoom;
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.moveTo(x, y - s);
+      ctx.lineTo(x + s, y);
+      ctx.lineTo(x, y + s);
+      ctx.lineTo(x - s, y);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
   }
 
   _drawLevelComplete(ctx, ctrl) {
@@ -1046,6 +1203,10 @@ function setupInput(canvas, renderer, ctrl) {
     if (phase === Phase.MAIN_MENU) {
       if (renderer.modeHitTest(x, y)) {
         ctrl.toggleMode();
+        return;
+      }
+      if (renderer.funHitTest(x, y)) {
+        ctrl.toggleFun();
         return;
       }
       ctrl.goToLevelSelect();
