@@ -170,7 +170,7 @@ class Board {
     r += dr; c += dc;
     while (r >= 0 && r < this.rows && c >= 0 && c < this.cols) {
       const occ = this._grid[r][c];
-      if (occ && occ.alive) return false;
+      if (occ && occ.alive && !occ.animatingFlyOff) return false;
       r += dr; c += dc;
     }
     return true;
@@ -378,9 +378,9 @@ class GameController {
   }
 
   handleClick(row, col) {
-    if (this.phase !== Phase.PLAYING || !this.board) return;
+    if ((this.phase !== Phase.PLAYING && this.phase !== Phase.ANIMATING) || !this.board) return;
     const arrow = this.board.getArrowAt(row, col);
-    if (!arrow || !arrow.alive) return;
+    if (!arrow || !arrow.alive || arrow.animatingFlyOff) return;
 
     if (this.board.isPathClear(arrow)) {
       arrow.animatingFlyOff = true;
@@ -1309,7 +1309,7 @@ function setupInput(canvas, renderer, ctrl) {
       renderer._cameraLevel = -1;
       return;
     }
-    if (phase === Phase.PLAYING) {
+    if (phase === Phase.PLAYING || phase === Phase.ANIMATING) {
       renderer.camera.startDrag(x, y);
     }
   }
@@ -1321,7 +1321,7 @@ function setupInput(canvas, renderer, ctrl) {
       const threshold = isTouch ? TOUCH_DRAG_THRESHOLD : DRAG_THRESHOLD;
       const wasDrag = renderer.camera._dragMoved >= threshold;
       renderer.camera.endDrag();
-      if (!wasDrag && ctrl.phase === Phase.PLAYING && ctrl.board) {
+      if (!wasDrag && (ctrl.phase === Phase.PLAYING || ctrl.phase === Phase.ANIMATING) && ctrl.board) {
         const cell = renderer.screenToCell(x, y, ctrl.board);
         if (cell) ctrl.handleClick(cell[0], cell[1]);
       }
