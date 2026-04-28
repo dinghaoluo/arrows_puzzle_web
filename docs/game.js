@@ -881,25 +881,67 @@ class Renderer {
     ctx.fillStyle = HUD_TEXT_COLOR;
     ctx.font = "18px Arial, sans-serif";
 
-    ctx.textAlign = "left";
     const mins = Math.floor(ctrl.elapsedTime / 60);
     const secs = Math.floor(ctrl.elapsedTime % 60);
-    ctx.fillText(`${mins}:${secs < 10 ? "0" : ""}${secs}`, 16, 32);
+    const timeText = `${mins}:${secs < 10 ? "0" : ""}${secs}`;
+    const levelText = `Level ${ctrl.currentLevel}`;
+    const scoreText = `Score: ${ctrl.score}`;
+    const hs = 18, spacing = 26;
+    const firstHeartX = this._w / 2 - ((ctrl.maxLives - 1) * spacing) / 2;
+    const heartsLeft = firstHeartX - hs / 2;
+    const heartsRight = firstHeartX + (ctrl.maxLives - 1) * spacing + hs / 2;
+    const timeRight = 16 + ctx.measureText(timeText).width;
+    const levelRight = this._w - 92;
+    const levelLeft = levelRight - ctx.measureText(levelText).width;
+    const compact = this._w < 440 || heartsLeft < timeRight + 10 || heartsRight > levelLeft - 10;
+
+    if (compact) {
+      ctx.textAlign = "left";
+      ctx.fillText(timeText, 14, 26);
+      this._drawTextButton(ctx, this.exitButtonRect(), "Exit", LEVEL_UNLOCKED_BTN);
+
+      const compactHeartSize = ctrl.maxLives > 3 ? 15 : 17;
+      const compactSpacing = ctrl.maxLives > 3 ? 20 : 24;
+      const compactFirstX = this._w / 2 - ((ctrl.maxLives - 1) * compactSpacing) / 2;
+      for (let i = 0; i < ctrl.maxLives; i++) {
+        drawHeart(ctx, compactFirstX + i * compactSpacing, 24, compactHeartSize, i < ctrl.lives ? HEART_COLOR : HEART_EMPTY_COLOR);
+      }
+
+      ctx.fillStyle = HUD_TEXT_COLOR;
+      ctx.font = "13px Arial, sans-serif";
+      ctx.textAlign = "left";
+      ctx.fillText(levelText, 14, 51);
+      ctx.textAlign = "right";
+      ctx.fillText(scoreText, this._w - 14, 51);
+      if (ctrl.combo > 1) {
+        const comboText = `x${Math.min(ctrl.combo, 5)}`;
+        const comboW = ctx.measureText(comboText).width;
+        const levelW = ctx.measureText(levelText).width;
+        const scoreW = ctx.measureText(scoreText).width;
+        const cx = this._w / 2;
+        if (14 + levelW + 12 < cx - comboW / 2 && cx + comboW / 2 + 12 < this._w - 14 - scoreW) {
+          ctx.fillStyle = "#e8a735";
+          ctx.textAlign = "center";
+          ctx.fillText(comboText, cx, 51);
+        }
+      }
+      return;
+    }
+
+    ctx.textAlign = "left";
+    ctx.fillText(timeText, 16, 32);
 
     ctx.textAlign = "right";
-    ctx.fillText(`Level ${ctrl.currentLevel}`, this._w - 92, 32);
+    ctx.fillText(levelText, this._w - 92, 32);
     this._drawTextButton(ctx, this.exitButtonRect(), "Exit", LEVEL_UNLOCKED_BTN);
 
-    const hs = 18, spacing = 26;
-    const total = ctrl.maxLives * spacing;
-    const sx = (this._w - total) / 2 + spacing / 2;
     for (let i = 0; i < ctrl.maxLives; i++) {
-      drawHeart(ctx, sx + i * spacing, 24, hs, i < ctrl.lives ? HEART_COLOR : HEART_EMPTY_COLOR);
+      drawHeart(ctx, firstHeartX + i * spacing, 24, hs, i < ctrl.lives ? HEART_COLOR : HEART_EMPTY_COLOR);
     }
 
     ctx.textAlign = "left";
     ctx.font = "14px Arial, sans-serif";
-    ctx.fillText(`Score: ${ctrl.score}`, 16, 52);
+    ctx.fillText(scoreText, 16, 52);
     if (ctrl.combo > 1) {
       ctx.fillStyle = "#e8a735";
       ctx.fillText(`x${Math.min(ctrl.combo, 5)} combo`, 120, 52);
