@@ -17,8 +17,10 @@ const LEVEL_LOCKED_BTN = "#b4b4b9";
 const FUN_BUTTON_COLOR = "#8a4dd8";
 const FUN_PARTICLE_GRAVITY = 42;
 
-const ARROW_HEAD_SIZE = 1.75;
+const ARROW_HEAD_SIZE = 1.17;
 const ARROW_BODY_WIDTH_RATIO = 0.32;
+const ARROW_BODY_MIN_SCREEN_WIDTH = 0.65;
+const ARROW_BODY_MAX_CELL_RATIO = 0.55;
 const ARROW_HEAD_TIP_RATIO = 0.62;
 const ARROW_HEAD_BACK_RATIO = -0.42;
 const ARROW_HEAD_NOTCH_RATIO = -0.18;
@@ -624,6 +626,12 @@ function arrowHeadPoints(size) {
   ];
 }
 
+function arrowBodyWidth(screenCellSize) {
+  const scaledWidth = Math.max(ARROW_BODY_MIN_SCREEN_WIDTH, screenCellSize * ARROW_BODY_WIDTH_RATIO);
+  const separationCap = Math.max(0.45, screenCellSize * ARROW_BODY_MAX_CELL_RATIO);
+  return Math.min(scaledWidth, separationCap);
+}
+
 function drawHeart(ctx, cx, cy, size, color) {
   const r = size * 0.28;
   ctx.fillStyle = color;
@@ -1032,10 +1040,11 @@ class Renderer {
   }
 
   _drawArrows(ctx, ctrl) {
-    const cs = this.cellSize();
-    const headSize = cs * ARROW_HEAD_SIZE;
+    const screenCs = CELL_SIZE_WORLD * this.camera.zoom;
+    const cs = Math.max(1, screenCs);
+    const headSize = screenCs * ARROW_HEAD_SIZE;
     const crWorld = CELL_SIZE_WORLD * ARROW_CORNER_RADIUS_RATIO;
-    const bw = Math.max(2, Math.round(cs * ARROW_BODY_WIDTH_RATIO));
+    const bw = arrowBodyWidth(screenCs);
     const cam = this.camera;
     const csW = CELL_SIZE_WORLD;
     const z = cam.zoom, oox = cam.ox, ooy = cam.oy;
