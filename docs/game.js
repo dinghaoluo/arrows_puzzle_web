@@ -17,8 +17,12 @@ const LEVEL_LOCKED_BTN = "#b4b4b9";
 const FUN_BUTTON_COLOR = "#8a4dd8";
 const FUN_PARTICLE_GRAVITY = 42;
 
-const ARROW_HEAD_SIZE = 0.62;
+const ARROW_HEAD_SIZE = 1.75;
 const ARROW_BODY_WIDTH_RATIO = 0.32;
+const ARROW_HEAD_TIP_RATIO = 0.62;
+const ARROW_HEAD_BACK_RATIO = -0.42;
+const ARROW_HEAD_NOTCH_RATIO = -0.18;
+const ARROW_HEAD_HALF_WIDTH_RATIO = 0.55;
 const ARROW_CORNER_RADIUS_RATIO = 0.22;
 const HUD_HEIGHT = 54;
 const CELL_SIZE_WORLD = 8;
@@ -594,8 +598,7 @@ function drawArrowBody(ctx, points, color, width, alpha, cr) {
 function drawArrowhead(ctx, cx, cy, size, direction, color, alpha) {
   if (size < 2) return;
   const angle = DIRECTION_ANGLES[direction];
-  const s = size;
-  const raw = [[s * 0.48, 0], [-s * 0.30, -s * 0.36], [-s * 0.10, 0], [-s * 0.30, s * 0.36]];
+  const raw = arrowHeadPoints(size);
   ctx.save();
   ctx.globalAlpha = alpha;
   ctx.fillStyle = color;
@@ -610,6 +613,15 @@ function drawArrowhead(ctx, cx, cy, size, direction, color, alpha) {
   ctx.closePath();
   ctx.fill();
   ctx.restore();
+}
+
+function arrowHeadPoints(size) {
+  return [
+    [size * ARROW_HEAD_TIP_RATIO, 0],
+    [size * ARROW_HEAD_BACK_RATIO, -size * ARROW_HEAD_HALF_WIDTH_RATIO],
+    [size * ARROW_HEAD_NOTCH_RATIO, 0],
+    [size * ARROW_HEAD_BACK_RATIO, size * ARROW_HEAD_HALF_WIDTH_RATIO],
+  ];
 }
 
 function drawHeart(ctx, cx, cy, size, color) {
@@ -1167,9 +1179,8 @@ class Renderer {
 
   _addHeadPath(ctx, cx, cy, size, direction) {
     const angle = DIRECTION_ANGLES[direction];
-    const s = size;
     const cos = Math.cos(angle), sin = Math.sin(angle);
-    const raw = [[s * 0.48, 0], [-s * 0.30, -s * 0.36], [-s * 0.10, 0], [-s * 0.30, s * 0.36]];
+    const raw = arrowHeadPoints(size);
     const rx0 = raw[0][0] * cos - raw[0][1] * sin;
     const ry0 = raw[0][0] * sin + raw[0][1] * cos;
     ctx.moveTo(cx + rx0, cy + ry0);
