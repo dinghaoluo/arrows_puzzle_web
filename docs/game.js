@@ -17,7 +17,8 @@ const LEVEL_LOCKED_BTN = "#b4b4b9";
 const FUN_BUTTON_COLOR = "#8a4dd8";
 const FUN_PARTICLE_GRAVITY = 42;
 
-const ARROW_HEAD_SIZE = 0.5;
+const ARROW_HEAD_SIZE = 0.62;
+const ARROW_BODY_WIDTH_RATIO = 0.32;
 const ARROW_CORNER_RADIUS_RATIO = 0.22;
 const HUD_HEIGHT = 54;
 const CELL_SIZE_WORLD = 8;
@@ -1022,7 +1023,7 @@ class Renderer {
     const cs = this.cellSize();
     const headSize = cs * ARROW_HEAD_SIZE;
     const crWorld = CELL_SIZE_WORLD * ARROW_CORNER_RADIUS_RATIO;
-    const bw = Math.max(1, Math.round(cs * 0.2));
+    const bw = Math.max(2, Math.round(cs * ARROW_BODY_WIDTH_RATIO));
     const cam = this.camera;
     const csW = CELL_SIZE_WORLD;
     const z = cam.zoom, oox = cam.ox, ooy = cam.oy;
